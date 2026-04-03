@@ -43,7 +43,6 @@ import org.schabi.newpipe.extractor.utils.Utils;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
-import java.io.File;
 import java.io.IOException;
 import java.net.MalformedURLException;
 import java.nio.charset.StandardCharsets;
@@ -58,7 +57,6 @@ import static java.util.Collections.singletonList;
 import static org.schabi.newpipe.extractor.services.youtube.ItagItem.APPROX_DURATION_MS_UNKNOWN;
 import static org.schabi.newpipe.extractor.services.youtube.ItagItem.CONTENT_LENGTH_UNKNOWN;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.*;
-import static org.schabi.newpipe.extractor.services.youtube.YoutubeService.getTempLocalization;
 import static org.schabi.newpipe.extractor.utils.Utils.EMPTY_STRING;
 import static org.schabi.newpipe.extractor.utils.Utils.isNullOrEmpty;
 
@@ -355,7 +353,8 @@ public class YoutubeStreamExtractor extends StreamExtractor {
             }
         }
 
-        if (views.toLowerCase().contains("no views")) {
+        if (views.toLowerCase().contains("no views")
+                || views.toLowerCase().contains("akukho ukubukwa")) {
             return 0;
         }
 
@@ -1050,12 +1049,10 @@ public class YoutubeStreamExtractor extends StreamExtractor {
         final Localization localization = getExtractorLocalization();
         final ContentCountry contentCountry = getExtractorContentCountry();
 
-        final Localization tempLocalizationForTitle = getTempLocalization();
-
         errors.clear();
 
         CancellableCall webPageCall = YoutubeParsingHelper.getWebPlayerResponse(
-                tempLocalizationForTitle, contentCountry, videoId, this);
+                localization, contentCountry, videoId, this);
 
         CancellableCall androidCall = null;
         CancellableCall tvCall = null;
@@ -1706,10 +1703,13 @@ public class YoutubeStreamExtractor extends StreamExtractor {
         final JsonObject audioTrack = formatData.getObject("audioTrack");
         if (audioTrack.has("id")) {
             final String audioTrackId = audioTrack.getString("id");
-            final String audioLocale = audioTrackId.split("\\.")[0].split("-")[0];
-            String audioTrackName = audioTrack.has("displayName")
-                    ? audioTrack.getString("displayName")
-                    : audioLocale;
+            final String displayName = audioTrack.getString("displayName");
+            final String langPart = audioTrackId.split("\\.")[0];
+            final String audioLocale = langPart.split("-")[0];
+            final boolean isDefault = displayName.contains("original") || displayName.contains("yokuqala");
+            final String audioTrackName = isDefault
+                    ? langPart + " (original)"
+                    : langPart;
             itagInfo.setAudioTrackInfo(audioTrackId, audioTrackName, audioLocale);
         }
     }

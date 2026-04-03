@@ -2,7 +2,6 @@ package org.schabi.newpipe.extractor.services.youtube.extractors;
 
 import com.grack.nanojson.JsonArray;
 import com.grack.nanojson.JsonObject;
-import com.grack.nanojson.JsonParser;
 import com.grack.nanojson.JsonWriter;
 import org.schabi.newpipe.extractor.Image;
 import org.schabi.newpipe.extractor.Page;
@@ -31,17 +30,13 @@ import org.schabi.newpipe.extractor.utils.Utils;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.*;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Collections.emptyList;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.*;
-import static org.schabi.newpipe.extractor.services.youtube.YoutubeService.getTempLocalization;
 import static org.schabi.newpipe.extractor.utils.Utils.isNullOrEmpty;
 
 /*
@@ -100,8 +95,6 @@ public class YoutubeChannelExtractor extends ChannelExtractor {
 
     private String channelId;
 
-    private JsonObject tempData;
-
 
     /**
      * If a channel is age-restricted, its pages are only accessible to logged-in and
@@ -132,79 +125,13 @@ public class YoutubeChannelExtractor extends ChannelExtractor {
                         .done())
                 .getBytes(UTF_8);
 
-        final byte[] bodyTemp = JsonWriter.string(prepareDesktopJsonBuilder(
-                        getTempLocalization(), getExtractorContentCountry())
-                        .value("browseId", id)
-                        .value("params", "EgZ2aWRlb3PyBgQKAjoA")
-                        .done())
-                .getBytes(UTF_8);
+        jsonResponse = getJsonPostResponse("browse", body, getExtractorLocalization());
+        YoutubeParsingHelper.defaultAlertsCheck(jsonResponse);
 
-        final CountDownLatch latch = new CountDownLatch(2);
-        final AtomicReference<ChannelResponseData> refNormal = new AtomicReference<>();
-        final AtomicReference<ChannelResponseData> refTemp = new AtomicReference<>();
-        final AtomicReference<Exception> refError = new AtomicReference<>();
-
-        getJsonPostResponseAsync("browse", body, getExtractorLocalization(), new Downloader.AsyncCallback() {
-            @Override
-            public void onSuccess(Response response) {
-                try {
-                    final JsonObject json = JsonParser.object().from(response.responseBody());
-                    refNormal.set(new ChannelResponseData(json, id));
-                } catch (Exception e) {
-                    refError.set(e);
-                }
-                latch.countDown();
-            }
-
-            @Override
-            public void onError(Exception t) {
-                refError.set(new IOException(t));
-                latch.countDown();
-            }
-        });
-
-        getJsonPostResponseAsync("browse", bodyTemp, getTempLocalization(), new Downloader.AsyncCallback() {
-            @Override
-            public void onSuccess(Response response) {
-                try {
-                    final JsonObject json = JsonParser.object().from(response.responseBody());
-                    refTemp.set(new ChannelResponseData(json, id));
-                } catch (Exception e) {
-                    refError.set(e);
-                }
-                latch.countDown();
-            }
-
-            @Override
-            public void onError(Exception t) {
-                refError.set(new IOException(t));
-                latch.countDown();
-            }
-        });
-
-        try {
-            latch.await();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Interrupted while waiting for channel responses", e);
-        }
-
-        if (refError.get() != null) {
-            final Exception ex = refError.get();
-            if (ex instanceof IOException) throw (IOException) ex;
-            if (ex instanceof ExtractionException) throw (ExtractionException) ex;
-            throw new ExtractionException("Unexpected error", ex);
-        }
-
-        final ChannelResponseData normal = refNormal.get();
-        final ChannelResponseData temp = refTemp.get();
-
-        redirectedChannelId = normal.channelId;
-        jsonResponse = normal.responseJson;
-        tempData = temp.responseJson;
+        redirectedChannelId = id;
 
         channelHeader = YoutubeChannelHelper.getChannelHeader(jsonResponse);
-        channelId = normal.channelId;
+        channelId = id;
         channelAgeGateRenderer = YoutubeChannelHelper.getChannelAgeGateRenderer(jsonResponse);
     }
 
@@ -495,12 +422,6 @@ public class YoutubeChannelExtractor extends ChannelExtractor {
             channelIds.add(getName());
             channelIds.add(getUrl());
 
-            final JsonObject tempTab = findTabInTempData("videos");
-            if (tempTab == null) {
-                throw new ParsingException("Could not find matching video tab in tempData");
-            }
-
-            final JsonObject tempTabContent = tempTab.getObject("content");
             final JsonObject tabContent = getVideoTab().getObject("content");
 
             JsonArray items = tabContent
@@ -511,21 +432,11 @@ public class YoutubeChannelExtractor extends ChannelExtractor {
                     .getObject("gridRenderer")
                     .getArray("items");
 
-            JsonArray tempItems = tempTabContent
-                    .getObject("sectionListRenderer")
-                    .getArray("contents").getObject(0)
-                    .getObject("itemSectionRenderer")
-                    .getArray("contents").getObject(0)
-                    .getObject("gridRenderer")
-                    .getArray("items");
-
             if (items.isEmpty()) {
                 items = tabContent.getObject("richGridRenderer").getArray("contents");
-                tempItems = tempTabContent.getObject("richGridRenderer").getArray("contents");
             }
 
-            final JsonObject continuation = collectStreamsFrom(collector, items, tempItems, channelIds);
-
+            final JsonObject continuation = collectStreamsFrom(collector, items, channelIds);
 
             nextPage = getNextPageFrom(continuation, channelIds);
         }
@@ -547,30 +458,17 @@ public class YoutubeChannelExtractor extends ChannelExtractor {
         final Map<String, List<String>> headers = new HashMap<>();
         addYoutubeHeaders(headers);
 
-        // Fetch main response
         final Response response = getDownloader().post(page.getUrl(), headers, page.getBody(),
                 getExtractorLocalization());
         final JsonObject ajaxJson = JsonUtils.toJsonObject(getValidJsonResponseBody(response));
 
-        // Fetch temp response
-        final Response tempResponse = getDownloader().post(page.getUrl(), headers, replaceLocaleInBytes(page.getBody(), getTempLocalization().getLocalizationCode())
-,
-                getTempLocalization());
-        final JsonObject tempAjaxJson = JsonUtils.toJsonObject(getValidJsonResponseBody(tempResponse));
-
-        // Extract continuation items from both
         final JsonObject sectionListContinuation = ajaxJson.getArray("onResponseReceivedActions")
-                .getObject(0)
-                .getObject("appendContinuationItemsAction");
-
-        final JsonObject tempSectionListContinuation = tempAjaxJson.getArray("onResponseReceivedActions")
                 .getObject(0)
                 .getObject("appendContinuationItemsAction");
 
         final JsonObject continuation = collectStreamsFrom(
                 collector,
                 sectionListContinuation.getArray("continuationItems"),
-                tempSectionListContinuation.getArray("continuationItems"),
                 channelIds
         );
 
@@ -603,25 +501,6 @@ public class YoutubeChannelExtractor extends ChannelExtractor {
                 + DISABLE_PRETTY_PRINT_PARAMETER, null, channelIds, null, body);
     }
 
-    private byte[] replaceLocaleInBytes(final byte[] bodyBytes,
-                                        final String targetLocale) throws ParsingException {
-        try {
-            // 1. bytes -> UTF-8 string
-            final String bodyStr = new String(bodyBytes, StandardCharsets.UTF_8);
-
-            // 2. parse JSON, replace "hl"
-            final JsonObject body = JsonUtils.toJsonObject(bodyStr);
-            body.getObject("context")
-                    .getObject("client")
-                    .put("hl", targetLocale);
-
-            // 3. JSON -> UTF-8 bytes again
-            return JsonWriter.string(body).getBytes(StandardCharsets.UTF_8);
-        } catch (final Exception e) {
-            throw new ParsingException("Could not replace locale in request body bytes", e);
-        }
-    }
-
 
 
     /**
@@ -634,7 +513,6 @@ public class YoutubeChannelExtractor extends ChannelExtractor {
      */
     private JsonObject collectStreamsFrom(@Nonnull final StreamInfoItemsCollector collector,
                                           @Nonnull final JsonArray videos,
-                                          @Nonnull final JsonArray tempVideos,
                                           @Nonnull final List<String> channelIds)
     {
         collector.reset();
@@ -645,15 +523,13 @@ public class YoutubeChannelExtractor extends ChannelExtractor {
 
         JsonObject continuation = null;
 
-        for (int i = 0; i < videos.size() && i < tempVideos.size(); i++) {
+        for (int i = 0; i < videos.size(); i++) {
             final JsonObject video = videos.getObject(i);
-            final JsonObject videoTemp = tempVideos.getObject(i);
 
             if (video.has("gridVideoRenderer")) {
                 collector.commit(new YoutubeStreamInfoItemExtractor(
                         video.getObject("gridVideoRenderer"),
-                        timeAgoParser,
-                        videoTemp.getObject("gridVideoRenderer")) {
+                        timeAgoParser) {
                     @Override
                     public String getUploaderName() {
                         return uploaderName;
@@ -666,13 +542,11 @@ public class YoutubeChannelExtractor extends ChannelExtractor {
                 });
             } else if (video.has("richItemRenderer")) {
                 final JsonObject content = video.getObject("richItemRenderer").getObject("content");
-                final JsonObject contentTemp = videoTemp.getObject("richItemRenderer").getObject("content");
 
                 if (content.has("videoRenderer")) {
                     collector.commit(new YoutubeStreamInfoItemExtractor(
                             content.getObject("videoRenderer"),
-                            timeAgoParser,
-                            contentTemp.getObject("videoRenderer")) {
+                            timeAgoParser) {
                         @Override
                         public String getUploaderName() {
                             return uploaderName;
@@ -686,8 +560,7 @@ public class YoutubeChannelExtractor extends ChannelExtractor {
                 } else if (content.has("lockupViewModel")) {
                     collector.commit(new YoutubeStreamInfoItemExtractor(
                             content.getObject("lockupViewModel"),
-                            timeAgoParser,
-                            contentTemp.getObject("lockupViewModel")) {
+                            timeAgoParser) {
                         @Override
                         public String getUploaderName() {
                             return uploaderName;
@@ -784,29 +657,6 @@ public class YoutubeChannelExtractor extends ChannelExtractor {
 
         this.videoTab = foundVideoTab;
         return foundVideoTab;
-    }
-
-    @Nullable
-    private JsonObject findTabInTempData(final String tabSuffix) throws ParsingException {
-        final JsonArray tabs = tempData.getObject("contents")
-                .getObject("twoColumnBrowseResultsRenderer")
-                .getArray("tabs");
-
-        for (final Object tabObj : tabs) {
-            final JsonObject tab = (JsonObject) tabObj;
-            if (tab.has("tabRenderer")) {
-                final JsonObject tabRenderer = tab.getObject("tabRenderer");
-                final String tabUrl = tabRenderer.getObject("endpoint")
-                        .getObject("commandMetadata")
-                        .getObject("webCommandMetadata")
-                        .getString("url", "");
-
-                if (tabUrl != null && tabUrl.endsWith("/" + tabSuffix)) {
-                    return tabRenderer;
-                }
-            }
-        }
-        return null;
     }
 
 }

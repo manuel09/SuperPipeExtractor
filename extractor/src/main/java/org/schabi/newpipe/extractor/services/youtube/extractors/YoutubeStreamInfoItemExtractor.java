@@ -138,7 +138,8 @@ public class YoutubeStreamInfoItemExtractor implements StreamInfoItemExtractor {
                     final String content = ((JsonObject) part)
                             .getObject("text")
                             .getString("content");
-                    if (content != null && content.toLowerCase().contains("watching")) {
+                    if (content != null && (content.toLowerCase().contains("watching")
+                            || content.toLowerCase().contains("bukele"))) {
                         cachedStreamType = StreamType.LIVE_STREAM;
                         return cachedStreamType;
                     }
@@ -381,7 +382,8 @@ public class YoutubeStreamInfoItemExtractor implements StreamInfoItemExtractor {
                     final String content = ((JsonObject) part)
                             .getObject("text")
                             .getString("content");
-                    if (content != null && content.toLowerCase().contains("ago")) {
+                    if (content != null && (content.toLowerCase().contains("ago")
+                            || content.toLowerCase().endsWith("dlule"))) {
                         return content;
                     }
                 }
@@ -448,10 +450,14 @@ public class YoutubeStreamInfoItemExtractor implements StreamInfoItemExtractor {
                                 .getObject("text")
                                 .getString("content");
                         if (content != null && (content.toLowerCase().contains("view")
-                                || content.toLowerCase().contains("no views"))) {
-                            if (content.toLowerCase().contains("no views")) {
+                                || content.toLowerCase().contains("ukubukwa")
+                                || content.toLowerCase().contains("no views")
+                                || content.toLowerCase().contains("akukho"))) {
+                            if (content.toLowerCase().contains("no views")
+                                    || content.toLowerCase().contains("akukho ukubukwa")) {
                                 return 0;
-                            } else if (content.toLowerCase().contains("recommended")) {
+                            } else if (content.toLowerCase().contains("recommended")
+                                    || content.toLowerCase().contains("okutusiwe")) {
                                 return -1;
                             }
                             return Utils.mixedNumberWordToLong(content);
@@ -464,9 +470,11 @@ public class YoutubeStreamInfoItemExtractor implements StreamInfoItemExtractor {
 
             final String viewCount = getTextFromObject(videoInfo.getObject("viewCountText"));
 
-            if (viewCount.toLowerCase().contains("no views")) {
+            if (viewCount.toLowerCase().contains("no views")
+                    || viewCount.toLowerCase().contains("akukho ukubukwa")) {
                 return 0;
-            } else if (viewCount.toLowerCase().contains("recommended")) {
+            } else if (viewCount.toLowerCase().contains("recommended")
+                    || viewCount.toLowerCase().contains("okutusiwe")) {
                 return -1;
             }
 
