@@ -30,7 +30,7 @@ import java.util.Map;
 public final class YoutubeApiDecoder {
 
     private static final String API_BASE_URL = "https://api.pipepipe.dev/decoder/decode";
-    private static final String USER_AGENT = "PipePipe/4.7.0";
+    private static final String USER_AGENT = "PipePipe/4.9.0";
 
     // Cache for decoded parameters to avoid redundant API calls
     @Nonnull

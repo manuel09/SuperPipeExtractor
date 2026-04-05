@@ -86,6 +86,9 @@ public class YoutubeStreamExtractor extends StreamExtractor {
 
     private JsonObject webStreamingData;
 
+    @Nullable
+    private JsonObject safariStreamingData;
+
     private JsonObject videoPrimaryInfoRenderer;
     private JsonObject videoSecondaryInfoRenderer;
     public JsonObject playerMicroFormatRenderer;
@@ -100,6 +103,7 @@ public class YoutubeStreamExtractor extends StreamExtractor {
     private String webCpn;
     private String androidCpn;
     private String iosCpn;
+    private String safariCpn;
 
     public WatchDataCache watchDataCache;
 
@@ -294,7 +298,7 @@ public class YoutubeStreamExtractor extends StreamExtractor {
             return Long.parseLong(duration);
         } catch (final Exception e) {
             return getDurationFromFirstAdaptiveFormat(Arrays.asList(
-                    androidStreamingData, tvHtml5SimplyEmbedStreamingData, webStreamingData));
+                    safariStreamingData, androidStreamingData, tvHtml5SimplyEmbedStreamingData, webStreamingData));
         }
     }
 
@@ -703,11 +707,15 @@ public class YoutubeStreamExtractor extends StreamExtractor {
     public String getDashMpdUrl() throws ParsingException {
         assertPageFetched();
 
-        // There is no DASH manifest available in the iOS clients and the DASH manifest of the
-        // Android client doesn't contain all available streams (mainly the WEBM ones)
-        return getManifestUrl(
+        String dashUrl = getManifestUrl(
                 "dash",
-                Arrays.asList(androidStreamingData));
+                Arrays.asList(safariStreamingData, androidStreamingData));
+
+        if (!dashUrl.isEmpty()) {
+            dashUrl = deobfuscateManifestUrl(dashUrl);
+        }
+
+        return dashUrl;
     }
 
     @Nonnull
@@ -715,12 +723,38 @@ public class YoutubeStreamExtractor extends StreamExtractor {
     public String getHlsUrl() throws ParsingException {
         assertPageFetched();
 
-        // Return HLS manifest of the iOS client first because on livestreams, the HLS manifest
-        // returned has separated audio and video streams
-        // Also, on videos, non-iOS clients don't have an HLS manifest URL in their player response
-        return getManifestUrl(
+        String hlsUrl = getManifestUrl(
                 "hls",
-                Arrays.asList(androidStreamingData, tvHtml5SimplyEmbedStreamingData, webStreamingData));
+                Arrays.asList(safariStreamingData, androidStreamingData, tvHtml5SimplyEmbedStreamingData, webStreamingData));
+
+        if (!hlsUrl.isEmpty()) {
+            hlsUrl = deobfuscateManifestUrl(hlsUrl);
+        }
+
+        return hlsUrl;
+    }
+
+    @Nonnull
+    private String deobfuscateManifestUrl(@Nonnull final String manifestUrl) throws ParsingException {
+        final java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("/n/([^/]+)").matcher(manifestUrl);
+        if (matcher.find()) {
+            final String encryptedN = matcher.group(1);
+            try {
+                final String videoId = getId();
+                final YoutubeApiDecoder.BatchDecodeResult result =
+                        YoutubeJavaScriptPlayerManager.deobfuscateBatch(
+                                videoId,
+                                null,
+                                Collections.singletonList(encryptedN));
+                final String decryptedN = result.getNParameters().get(encryptedN);
+                if (decryptedN != null) {
+                    return manifestUrl.replace("/n/" + encryptedN, "/n/" + decryptedN);
+                }
+            } catch (final Exception e) {
+                throw new ParsingException("Could not deobfuscate manifest URL n parameter", e);
+            }
+        }
+        return manifestUrl;
     }
 
     @Nonnull
@@ -764,6 +798,7 @@ public class YoutubeStreamExtractor extends StreamExtractor {
         try {
             // Collect audio streams
             java.util.stream.Stream.of(
+                    new Pair<>(safariStreamingData, safariCpn),
                     new Pair<>(androidStreamingData, androidCpn),
                     new Pair<>(tvHtml5SimplyEmbedStreamingData, tvHtml5SimplyEmbedCpn)
             )
@@ -775,6 +810,7 @@ public class YoutubeStreamExtractor extends StreamExtractor {
 
             // Collect video streams
             java.util.stream.Stream.of(
+                    new Pair<>(safariStreamingData, safariCpn),
                     new Pair<>(androidStreamingData, androidCpn),
                     new Pair<>(tvHtml5SimplyEmbedStreamingData, tvHtml5SimplyEmbedCpn)
             )
@@ -786,6 +822,7 @@ public class YoutubeStreamExtractor extends StreamExtractor {
 
             // Collect video-only streams
             java.util.stream.Stream.of(
+                    new Pair<>(safariStreamingData, safariCpn),
                     new Pair<>(androidStreamingData, androidCpn),
                     new Pair<>(tvHtml5SimplyEmbedStreamingData, tvHtml5SimplyEmbedCpn)
             )
@@ -1055,14 +1092,12 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                 localization, contentCountry, videoId, this);
 
         CancellableCall androidCall = null;
-        CancellableCall tvCall = null;
-        CancellableCall webCall = null;
+        CancellableCall safariCall = null;
 
         if (StringUtils.isBlank(ServiceList.YouTube.getTokens())) {
             androidCall = fetchAndroidMobileJsonPlayer(contentCountry, localization, videoId);
         } else {
-            tvCall = fetchTvHtml5EmbedJsonPlayer(contentCountry, localization, videoId);
-            webCall = fetchWebJsonPlayer(contentCountry, localization, videoId);
+            safariCall = fetchSafariJsonPlayer(contentCountry, localization, videoId);
         }
 
         final byte[] body = JsonWriter.string(
@@ -1099,14 +1134,14 @@ public class YoutubeStreamExtractor extends StreamExtractor {
         long startTime = System.nanoTime();
         do {
             if (((StringUtils.isBlank(ServiceList.YouTube.getTokens()) && androidCall.isFinished())
-                    || (StringUtils.isNotBlank(ServiceList.YouTube.getTokens()) && webCall.isFinished() && tvCall.isFinished())) &&
+                    || (StringUtils.isNotBlank(ServiceList.YouTube.getTokens()) && safariCall.isFinished())) &&
                     webPageCall.isFinished() && nextDataCall.isFinished()) {
                 break;
             }
         } while (TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - startTime) <= ServiceList.YouTube.getLoadingTimeout());
 
         if (((StringUtils.isBlank(ServiceList.YouTube.getTokens()) && androidStreamingData == null)
-                || ((StringUtils.isNotBlank(ServiceList.YouTube.getTokens()) && webStreamingData == null && tvHtml5SimplyEmbedStreamingData == null)))
+                || ((StringUtils.isNotBlank(ServiceList.YouTube.getTokens()) && safariStreamingData == null)))
                 || nextResponse == null) {
             for (Throwable e: errors) {
                 if (e instanceof AntiBotException) {
@@ -1414,6 +1449,49 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                         tvHtml5SimplyEmbedCpn), localization, callback);
     }
 
+    private CancellableCall fetchSafariJsonPlayer(@Nonnull final ContentCountry contentCountry,
+                                                  @Nonnull final Localization localization,
+                                                  @Nonnull final String videoId)
+            throws IOException, ExtractionException {
+        safariCpn = generateContentPlaybackNonce();
+
+        final Downloader.AsyncCallback callback = new Downloader.AsyncCallback() {
+            @Override
+            public void onSuccess(Response response) {
+                try {
+                    final JsonObject safariPlayerResponse = JsonUtils.toJsonObject(getValidJsonResponseBody(response));
+                    if (isPlayerResponseNotValid(safariPlayerResponse, videoId)) {
+                        if (safariPlayerResponse.toString().contains("Sign in to confirm")) {
+                            throw new AntiBotException("Safari player response is not valid");
+                        }
+                        throw new ExtractionException("Safari player response is not valid");
+                    }
+
+                    YoutubeStreamExtractor.this.playerResponse = safariPlayerResponse;
+
+                    final JsonObject streamingData = safariPlayerResponse.getObject(STREAMING_DATA);
+                    if (!isNullOrEmpty(streamingData)) {
+                        safariStreamingData = streamingData;
+                        if (isNullOrEmpty(playerCaptionsTracklistRenderer)) {
+                            playerCaptionsTracklistRenderer = safariPlayerResponse.getObject("captions")
+                                    .getObject("playerCaptionsTracklistRenderer");
+                        }
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    errors.add(e);
+                }
+            }
+        };
+
+        return getSafariPostResponseAsync(PLAYER,
+                createSafariPlayerBody(localization,
+                        contentCountry,
+                        videoId,
+                        YoutubeJavaScriptPlayerManager.getSignatureTimestamp(videoId),
+                        safariCpn), localization, callback);
+    }
+
 
     /**
      * Checks whether an additional player response is not valid.
@@ -1511,6 +1589,7 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                     As age-restricted videos are not common, use tvHtml5SimplyEmbedStreamingData
                     last, which will be the only one not empty for age-restricted content
                      */
+                    new Pair<>(safariStreamingData, safariCpn),
                     new Pair<>(androidStreamingData, androidCpn),
                     new Pair<>(tvHtml5SimplyEmbedStreamingData, tvHtml5SimplyEmbedCpn)
 
