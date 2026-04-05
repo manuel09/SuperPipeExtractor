@@ -71,5 +71,9 @@ public class PeertubeStreamLinkHandlerFactoryTest {
         // make sure playlists aren't accepted
         assertFalse(linkHandler.acceptUrl("https://framatube.org/w/p/dacdc4ef-5160-4846-9b70-a655880da667"));
         assertFalse(linkHandler.acceptUrl("https://framatube.org/videos/watch/playlist/dacdc4ef-5160-4846-9b70-a655880da667"));
+
+        // make sure non-PeerTube URLs with /w/ in path are not accepted (issue #2127)
+        assertFalse(linkHandler.acceptUrl("https://1drv.ms/w/s!example"));
+        assertFalse(linkHandler.acceptUrl("http://1drv.ms/w/s!example"));
     }
 }

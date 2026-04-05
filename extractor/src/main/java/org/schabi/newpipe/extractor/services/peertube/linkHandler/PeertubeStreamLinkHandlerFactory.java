@@ -5,6 +5,9 @@ import org.schabi.newpipe.extractor.exceptions.FoundAdException;
 import org.schabi.newpipe.extractor.exceptions.ParsingException;
 import org.schabi.newpipe.extractor.linkhandler.LinkHandlerFactory;
 import org.schabi.newpipe.extractor.utils.Parser;
+import org.schabi.newpipe.extractor.utils.Utils;
+
+import java.net.URL;
 
 public final class PeertubeStreamLinkHandlerFactory extends LinkHandlerFactory {
 
@@ -47,9 +50,22 @@ public final class PeertubeStreamLinkHandlerFactory extends LinkHandlerFactory {
             return false;
         }
         try {
+            final URL urlObj = Utils.stringToURL(url);
+            if (!Utils.isHTTP(urlObj)) {
+                return false;
+            }
+            final String path = urlObj.getPath();
+            // Ensure the URL path starts with a PeerTube-specific prefix.
+            // Without this check, any URL containing /w/ (e.g. https://1drv.ms/w/s!...)
+            // would be falsely accepted as a PeerTube stream.
+            if (!path.startsWith("/w/") && !path.startsWith("/videos/")
+                    && !path.startsWith("/api/v1/videos/")) {
+                return false;
+            }
             getId(url);
             return true;
-        } catch (final ParsingException e) {
+        } catch (final ParsingException | IllegalArgumentException
+                | java.net.MalformedURLException e) {
             return false;
         }
     }
