@@ -308,30 +308,94 @@ public class YoutubeChannelExtractor extends ChannelExtractor {
             return UNKNOWN_SUBSCRIBER_COUNT;
         }
 
-        return metadataObject.getObject("contentMetadataViewModel")
-                .getArray("metadataRows")
-                .stream()
+        final JsonArray metadataRows = metadataObject.getObject("contentMetadataViewModel")
+                .getArray("metadataRows");
+
+        // Keep an explicit "subscriber" keyword check for English responses.
+        final long explicitSubscriberCount = metadataRows.stream()
                 .filter(JsonObject.class::isInstance)
                 .map(JsonObject.class::cast)
                 .flatMap(metadataRow -> metadataRow.getArray("metadataParts").stream())
                 .filter(JsonObject.class::isInstance)
                 .map(JsonObject.class::cast)
-                .filter(metadataPart -> metadataPart.has("text"))
-                .filter(metadataPart -> {
-                    JsonObject textObject = metadataPart.getObject("text");
-                    return textObject.has(CONTENT) &&
-                            textObject.getString(CONTENT).toLowerCase().contains("subscriber");
-                })
+                .filter(this::metadataPartContainsSubscriberKeyword)
+                .map(this::parseSubscriberCountFromMetadataPart)
+                .filter(subscriberCount -> subscriberCount != UNKNOWN_SUBSCRIBER_COUNT)
                 .findFirst()
-                .map(metadataPart -> {
-                    try {
-                        return Utils.mixedNumberWordToLong(metadataPart.getObject("text")
-                                .getString(CONTENT));
-                    } catch (NumberFormatException | ParsingException e) {
-                        return UNKNOWN_SUBSCRIBER_COUNT;
-                    }
-                })
                 .orElse(UNKNOWN_SUBSCRIBER_COUNT);
+        if (explicitSubscriberCount != UNKNOWN_SUBSCRIBER_COUNT) {
+            return explicitSubscriberCount;
+        }
+
+        // Fallback for localized responses where the keyword is not "subscriber".
+        for (final Object metadataRowObject : metadataRows) {
+            if (!(metadataRowObject instanceof JsonObject)) {
+                continue;
+            }
+
+            final JsonArray metadataParts = ((JsonObject) metadataRowObject)
+                    .getArray("metadataParts");
+            if (metadataParts == null || metadataParts.isEmpty()) {
+                continue;
+            }
+
+            if (metadataParts.size() > 1) {
+                final JsonObject firstMetadataPart = metadataParts.getObject(0);
+                if (firstMetadataPart.has("accessibilityLabel")) {
+                    final long subscriberCount =
+                            parseSubscriberCountFromMetadataPart(firstMetadataPart);
+                    if (subscriberCount != UNKNOWN_SUBSCRIBER_COUNT) {
+                        return subscriberCount;
+                    }
+                }
+            } else {
+                final JsonObject metadataPart = metadataParts.getObject(0);
+                if (metadataPart.has("accessibilityLabel")) {
+                    final long subscriberCount = parseSubscriberCountFromMetadataPart(metadataPart);
+                    if (subscriberCount != UNKNOWN_SUBSCRIBER_COUNT) {
+                        return subscriberCount;
+                    }
+                }
+            }
+        }
+
+        return UNKNOWN_SUBSCRIBER_COUNT;
+    }
+
+    private boolean metadataPartContainsSubscriberKeyword(@Nonnull final JsonObject metadataPart) {
+        if (!metadataPart.has("text")) {
+            return false;
+        }
+
+        final JsonObject textObject = metadataPart.getObject("text");
+        return textObject.has(CONTENT)
+                && textObject.getString(CONTENT).toLowerCase(Locale.ROOT).contains("subscriber");
+    }
+
+    private long parseSubscriberCountFromMetadataPart(@Nonnull final JsonObject metadataPart) {
+        if (!metadataPart.has("text")) {
+            return UNKNOWN_SUBSCRIBER_COUNT;
+        }
+
+        final JsonObject textObject = metadataPart.getObject("text");
+        String textContent = textObject.getString(CONTENT, "");
+        if (isNullOrEmpty(textContent)) {
+            try {
+                textContent = getTextFromObject(textObject);
+            } catch (final ParsingException e) {
+                return UNKNOWN_SUBSCRIBER_COUNT;
+            }
+        }
+
+        if (isNullOrEmpty(textContent) || textContent.startsWith("@")) {
+            return UNKNOWN_SUBSCRIBER_COUNT;
+        }
+
+        try {
+            return Utils.mixedNumberWordToLong(textContent);
+        } catch (final NumberFormatException | ParsingException e) {
+            return UNKNOWN_SUBSCRIBER_COUNT;
+        }
     }
 
 
