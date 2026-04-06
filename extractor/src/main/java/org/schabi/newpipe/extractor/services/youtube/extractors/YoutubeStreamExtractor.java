@@ -859,11 +859,249 @@ public class YoutubeStreamExtractor extends StreamExtractor {
                 }
             }
 
+            if (cachedAudioStreams.isEmpty() && cachedVideoOnlyStreams.isEmpty()) {
+                tryExtractHlsStreams(videoId);
+            }
+
             streamsCached = true;
 
         } catch (final Exception e) {
             throw new ParsingException("Could not get streams", e);
         }
+    }
+
+    private void tryExtractHlsStreams(final String videoId) throws ExtractionException {
+        final String hlsManifestUrl = getHlsManifestUrlFromStreamingData();
+        if (hlsManifestUrl.isEmpty()) {
+            return;
+        }
+
+        try {
+            final String deobfuscatedUrl = deobfuscateManifestUrl(hlsManifestUrl);
+            final Response response = NewPipe.getDownloader().get(deobfuscatedUrl);
+            final String manifestContent = response.responseBody();
+            parseHlsMasterManifest(manifestContent, videoId);
+        } catch (final Exception e) {
+            throw new ParsingException("Could not extract HLS streams", e);
+        }
+    }
+
+    @Nonnull
+    private String getHlsManifestUrlFromStreamingData() {
+        for (final JsonObject sd : Arrays.asList(
+                safariStreamingData)) {
+            if (sd != null) {
+                final String url = sd.getString("hlsManifestUrl");
+                if (url != null && !url.isEmpty()) {
+                    return url;
+                }
+            }
+        }
+        return EMPTY_STRING;
+    }
+
+    private void parseHlsMasterManifest(@Nonnull final String manifestContent,
+                                         final String videoId) throws ParsingException {
+        final String[] lines = manifestContent.split("\n");
+        final String preferredAudioLanguage = ServiceList.YouTube.getAudioLanguage();
+
+        final Map<String, String> audioTrackUrls = new LinkedHashMap<>();
+        final Map<String, String> audioTrackNames = new LinkedHashMap<>();
+        final Map<String, String> audioTrackLocales = new LinkedHashMap<>();
+        final Map<String, String> audioTrackAconts = new LinkedHashMap<>();
+
+        for (int i = 0; i < lines.length; i++) {
+            final String line = lines[i].trim();
+            if (!line.startsWith("#EXT-X-STREAM-INF:")) {
+                continue;
+            }
+            if (i + 1 >= lines.length) {
+                break;
+            }
+            final String streamUrl = lines[i + 1].trim();
+            if (streamUrl.isEmpty() || streamUrl.startsWith("#")) {
+                continue;
+            }
+
+            final String resolution = extractHlsStringAttribute(line, "RESOLUTION");
+            final String codecs = extractHlsStringAttribute(line, "CODECS");
+            final int frameRate = extractHlsAttribute(line, "FRAME-RATE");
+            final String audioContentId = extractHlsStringAttribute(line, "YT-EXT-AUDIO-CONTENT-ID");
+
+            String videoCodec = null;
+            if (codecs != null) {
+                for (final String c : codecs.split(",")) {
+                    final String trimmed = c.trim();
+                    if (!trimmed.startsWith("mp4a") && !trimmed.startsWith("opus")
+                            && !trimmed.startsWith("ac-3") && !trimmed.startsWith("ec-3")) {
+                        videoCodec = trimmed;
+                        break;
+                    }
+                }
+            }
+
+            String acont = extractHlsXtagsValue(streamUrl, "acont");
+
+            if (resolution != null && !resolution.isEmpty()) {
+                final String[] resParts = resolution.split("x");
+                final String height = resParts.length == 2 ? resParts[1] + "p" : resolution;
+                final String resString = frameRate > 30 ? height + frameRate : height;
+
+                String audioTrackId = null;
+                String audioLocale = null;
+                String audioTrackName = null;
+                if (audioContentId != null && !audioContentId.isEmpty()) {
+                    audioTrackId = audioContentId;
+                    final String langPart = audioContentId.split("\\.")[0];
+                    audioLocale = langPart.split("-")[0];
+                    if ("original".equals(acont)) {
+                        audioTrackName = langPart + " (original)";
+                    } else {
+                        audioTrackName = langPart;
+                    }
+
+                    if (!audioTrackUrls.containsKey(audioTrackId)
+                            || "original".equals(acont)) {
+                        audioTrackUrls.put(audioTrackId, streamUrl);
+                    }
+                    audioTrackNames.put(audioTrackId, audioTrackName);
+                    audioTrackLocales.put(audioTrackId, audioLocale);
+                    if (acont != null) {
+                        audioTrackAconts.put(audioTrackId, acont);
+                    }
+                }
+
+                final String streamId = "hls-" + videoId + "-" + resString
+                        + (audioTrackId != null ? "-" + audioTrackId : "");
+
+                final VideoStream.Builder builder = new VideoStream.Builder()
+                        .setId(streamId)
+                        .setContent(streamUrl, true)
+                        .setIsVideoOnly(false)
+                        .setResolution(resString)
+                        .setDeliveryMethod(DeliveryMethod.HLS);
+
+                if (videoCodec != null) {
+                    builder.setCodec(videoCodec);
+                }
+                if (codecs != null) {
+                    if (codecs.contains("avc") || codecs.contains("mp4a")) {
+                        builder.setMediaFormat(MediaFormat.MPEG_4);
+                    } else if (codecs.contains("vp9") || codecs.contains("vp09")) {
+                        builder.setMediaFormat(MediaFormat.WEBM);
+                    }
+                }
+
+                if (audioTrackId != null) {
+                    builder.setAudioTrackId(audioTrackId);
+                    builder.setAudioTrackName(audioTrackName);
+                    builder.setAudioLocale(audioLocale);
+                }
+
+                cachedVideoStreams.add(builder.build());
+            }
+        }
+
+        for (int i = 0; i < lines.length; i++) {
+            final String line = lines[i].trim();
+            if (!line.startsWith("#EXT-X-MEDIA:") || !line.contains("TYPE=AUDIO")) {
+                continue;
+            }
+            final String uri = extractHlsStringAttribute(line, "URI");
+            if (uri == null || uri.isEmpty()) {
+                continue;
+            }
+
+            final String groupId = extractHlsStringAttribute(line, "GROUP-ID");
+            final String name = extractHlsStringAttribute(line, "NAME");
+            final String language = extractHlsStringAttribute(line, "LANGUAGE");
+
+            final AudioStream.Builder audioBuilder = new AudioStream.Builder()
+                    .setId("hls-" + videoId + "-audio-" + (groupId != null ? groupId : "default")
+                            + (language != null ? "-" + language : ""))
+                    .setContent(uri, true)
+                    .setMediaFormat(MediaFormat.M4A)
+                    .setDeliveryMethod(DeliveryMethod.HLS);
+            if (name != null) {
+                audioBuilder.setAudioTrackName(name);
+            }
+            if (language != null) {
+                audioBuilder.setAudioTrackId(language);
+                audioBuilder.setAudioLocale(language.split("-")[0]);
+            }
+            cachedAudioStreams.add(audioBuilder.build());
+        }
+
+        if (cachedAudioStreams.isEmpty() && !audioTrackUrls.isEmpty()) {
+            for (final Map.Entry<String, String> entry : audioTrackUrls.entrySet()) {
+                final String trackId = entry.getKey();
+                final String url = entry.getValue();
+                final String trackName = audioTrackNames.get(trackId);
+                final String locale = audioTrackLocales.get(trackId);
+
+                final AudioStream.Builder audioBuilder = new AudioStream.Builder()
+                        .setId("hls-" + videoId + "-audio-" + trackId)
+                        .setContent(url, true)
+                        .setMediaFormat(MediaFormat.M4A)
+                        .setDeliveryMethod(DeliveryMethod.HLS)
+                        .setAudioTrackId(trackId)
+                        .setAudioLocale(locale);
+                if (trackName != null) {
+                    audioBuilder.setAudioTrackName(trackName);
+                }
+                cachedAudioStreams.add(audioBuilder.build());
+            }
+        }
+    }
+
+    @Nullable
+    private static String extractHlsXtagsValue(@Nonnull final String url,
+                                                 @Nonnull final String key) {
+        try {
+            final String decoded = java.net.URLDecoder.decode(url, "UTF-8");
+            final java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("xtags=([^/]+)").matcher(decoded);
+            if (m.find()) {
+                final String xtags = m.group(1);
+                for (final String part : xtags.split(":")) {
+                    final String[] kv = part.split("=", 2);
+                    if (kv.length == 2 && kv[0].equals(key)) {
+                        return kv[1];
+                    }
+                }
+            }
+        } catch (final Exception ignored) {
+        }
+        return null;
+    }
+
+    private static int extractHlsAttribute(@Nonnull final String line,
+                                            @Nonnull final String attribute) {
+        final java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile(attribute + "=(\\d+)").matcher(line);
+        if (matcher.find()) {
+            try {
+                return Integer.parseInt(matcher.group(1));
+            } catch (final NumberFormatException ignored) {
+            }
+        }
+        return -1;
+    }
+
+    @Nullable
+    private static String extractHlsStringAttribute(@Nonnull final String line,
+                                                     @Nonnull final String attribute) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile(attribute + "=\"([^\"]+)\"").matcher(line);
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+        matcher = java.util.regex.Pattern
+                .compile(attribute + "=([^,\\s]+)").matcher(line);
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+        return null;
     }
 
     @Override
@@ -1160,6 +1398,35 @@ public class YoutubeStreamExtractor extends StreamExtractor {
             checkPlayabilityStatus(playerResponse.getObject("playabilityStatus"), videoId);
             setStreamType();
         }
+
+        if (streamType != StreamType.LIVE_STREAM && isSabrOnlyResponse()
+                && getHlsManifestUrlFromStreamingData().isEmpty()) {
+            throw new ContentNotSupportedException(
+                    "YouTube returned SABR-only streaming data without usable stream URLs. "
+                    + "Try logging in to get HLS fallback streams.");
+        }
+    }
+
+    private boolean isSabrOnlyResponse() {
+        for (final JsonObject sd : Arrays.asList(
+                safariStreamingData, androidStreamingData,
+                webStreamingData, tvHtml5SimplyEmbedStreamingData)) {
+            if (sd == null) {
+                continue;
+            }
+            final JsonArray adaptive = sd.getArray(ADAPTIVE_FORMATS);
+            if (adaptive == null || adaptive.isEmpty()) {
+                continue;
+            }
+            for (int i = 0; i < adaptive.size(); i++) {
+                final JsonObject fmt = adaptive.getObject(i);
+                if (fmt.has("url") || fmt.has(SIGNATURE_CIPHER) || fmt.has(CIPHER)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        return false;
     }
 
 
@@ -1804,14 +2071,14 @@ public class YoutubeStreamExtractor extends StreamExtractor {
 
         if (formatData.has("url")) {
             streamUrl = formatData.getString("url");
-        } else {
-            // This url has an obfuscated signature - store it for batch processing
+        } else if (formatData.has(SIGNATURE_CIPHER) || formatData.has(CIPHER)) {
             final String cipherString = formatData.getString(CIPHER,
                     formatData.getString(SIGNATURE_CIPHER));
             final Map<String, String> cipher = Parser.compatParseMap(cipherString);
             obfuscatedSignature = cipher.getOrDefault("s", "");
-            // Build URL without signature - will be added during batch deobfuscation
             streamUrl = cipher.get("url") + "&" + cipher.get("sp") + "=SIGNATURE_PLACEHOLDER";
+        } else {
+            return null;
         }
 
         // Add the content playback nonce to the stream URL

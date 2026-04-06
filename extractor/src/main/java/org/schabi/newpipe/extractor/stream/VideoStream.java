@@ -51,6 +51,9 @@ public final class VideoStream extends Stream {
     private String quality;
     private String codec = "";
     @Nullable private ItagItem itagItem;
+    @Nullable private String audioTrackId;
+    @Nullable private String audioTrackName;
+    @Nullable private String audioLocale;
 
     /**
      * Class to build {@link VideoStream} objects.
@@ -71,6 +74,12 @@ public final class VideoStream extends Stream {
         private String codec;
         @Nullable
         private ItagItem itagItem;
+        @Nullable
+        private String audioTrackId;
+        @Nullable
+        private String audioTrackName;
+        @Nullable
+        private String audioLocale;
 
         /**
          * Create a new {@link Builder} instance with its default values.
@@ -232,6 +241,21 @@ public final class VideoStream extends Stream {
             return this;
         }
 
+        public Builder setAudioTrackId(@Nullable final String audioTrackId) {
+            this.audioTrackId = audioTrackId;
+            return this;
+        }
+
+        public Builder setAudioTrackName(@Nullable final String audioTrackName) {
+            this.audioTrackName = audioTrackName;
+            return this;
+        }
+
+        public Builder setAudioLocale(@Nullable final String audioLocale) {
+            this.audioLocale = audioLocale;
+            return this;
+        }
+
         /**
          * Build a {@link VideoStream} using the builder's current values.
          *
@@ -279,7 +303,7 @@ public final class VideoStream extends Stream {
             }
 
             return new VideoStream(id, content, isUrl, mediaFormat, deliveryMethod, resolution, codec,
-                    isVideoOnly, manifestUrl, itagItem);
+                    isVideoOnly, manifestUrl, itagItem, audioTrackId, audioTrackName, audioLocale);
         }
     }
 
@@ -310,7 +334,10 @@ public final class VideoStream extends Stream {
                         String codec,
                         final boolean isVideoOnly,
                         @Nullable final String manifestUrl,
-                        @Nullable final ItagItem itagItem) {
+                        @Nullable final ItagItem itagItem,
+                        @Nullable final String audioTrackId,
+                        @Nullable final String audioTrackName,
+                        @Nullable final String audioLocale) {
         super(id, content, isUrl, format, deliveryMethod, manifestUrl);
         if (itagItem != null) {
             this.itagItem = itagItem;
@@ -331,6 +358,9 @@ public final class VideoStream extends Stream {
         }
         this.resolution = resolution;
         this.isVideoOnly = isVideoOnly;
+        this.audioTrackId = audioTrackId;
+        this.audioTrackName = audioTrackName;
+        this.audioLocale = audioLocale;
     }
 
     /**
@@ -341,7 +371,9 @@ public final class VideoStream extends Stream {
         return super.equalStats(cmp)
                 && cmp instanceof VideoStream
                 && resolution.equals(((VideoStream) cmp).resolution)
-                && isVideoOnly == ((VideoStream) cmp).isVideoOnly;
+                && isVideoOnly == ((VideoStream) cmp).isVideoOnly
+                && java.util.Objects.equals(audioTrackId,
+                        ((VideoStream) cmp).audioTrackId);
     }
 
     /**
@@ -492,5 +524,20 @@ public final class VideoStream extends Stream {
     @Nullable
     public ItagItem getItagItem() {
         return itagItem;
+    }
+
+    @Nullable
+    public String getAudioTrackId() {
+        return audioTrackId;
+    }
+
+    @Nullable
+    public String getAudioTrackName() {
+        return audioTrackName;
+    }
+
+    @Nullable
+    public String getAudioLocale() {
+        return audioLocale;
     }
 }
