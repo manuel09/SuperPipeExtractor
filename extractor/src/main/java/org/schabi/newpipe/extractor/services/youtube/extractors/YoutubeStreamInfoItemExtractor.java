@@ -453,10 +453,14 @@ public class YoutubeStreamInfoItemExtractor implements StreamInfoItemExtractor {
                                 || content.toLowerCase().contains("ukubukwa")
                                 || content.toLowerCase().contains("no views")
                                 || content.toLowerCase().contains("akukho"))) {
-                            final Long parsedViewCount = parseViewCount(content);
-                            if (parsedViewCount != null) {
-                                return parsedViewCount;
+                            if (content.toLowerCase().contains("no views")
+                                    || content.toLowerCase().contains("akukho ukubukwa")) {
+                                return 0;
+                            } else if (content.toLowerCase().contains("recommended")
+                                    || content.toLowerCase().contains("okutusiwe")) {
+                                return -1;
                             }
+                            return Utils.mixedNumberWordToLong(content);
                         }
                     }
                 }
@@ -465,41 +469,18 @@ public class YoutubeStreamInfoItemExtractor implements StreamInfoItemExtractor {
             }
 
             final String viewCount = getTextFromObject(videoInfo.getObject("viewCountText"));
-            final Long parsedViewCount = parseViewCount(viewCount);
-            return parsedViewCount != null ? parsedViewCount : -1;
+
+            if (viewCount.toLowerCase().contains("no views")
+                    || viewCount.toLowerCase().contains("akukho ukubukwa")) {
+                return 0;
+            } else if (viewCount.toLowerCase().contains("recommended")
+                    || viewCount.toLowerCase().contains("okutusiwe")) {
+                return -1;
+            }
+
+            return Long.parseLong(Utils.removeNonDigitCharacters(viewCount));
         } catch (final Exception e) {
             throw new ParsingException("Could not get view count", e);
-        }
-    }
-
-    @Nullable
-    private Long parseViewCount(@Nullable final String viewCountText) {
-        if (isNullOrEmpty(viewCountText)) {
-            return null;
-        }
-
-        final String lowerCaseViewCountText = viewCountText.toLowerCase();
-        if (lowerCaseViewCountText.contains("no views")
-                || lowerCaseViewCountText.contains("akukho ukubukwa")) {
-            return 0L;
-        } else if (lowerCaseViewCountText.contains("recommended")
-                || lowerCaseViewCountText.contains("okutusiwe")) {
-            return -1L;
-        }
-
-        try {
-            return Utils.mixedNumberWordToLong(viewCountText);
-        } catch (final Exception ignored) {
-            final String digits = Utils.removeNonDigitCharacters(viewCountText);
-            if (isNullOrEmpty(digits)) {
-                return null;
-            }
-
-            try {
-                return Long.parseLong(digits);
-            } catch (final NumberFormatException ignoredToo) {
-                return null;
-            }
         }
     }
 
