@@ -2,18 +2,15 @@
 
 package org.schabi.newpipe.extractor.services.bandcamp.extractors;
 
-import edu.umd.cs.findbugs.annotations.NonNull;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 import org.schabi.newpipe.extractor.InfoItem;
-import org.schabi.newpipe.extractor.MetaInfo;
 import org.schabi.newpipe.extractor.Page;
 import org.schabi.newpipe.extractor.StreamingService;
 import org.schabi.newpipe.extractor.downloader.Downloader;
 import org.schabi.newpipe.extractor.exceptions.ExtractionException;
-import org.schabi.newpipe.extractor.exceptions.ParsingException;
 import org.schabi.newpipe.extractor.linkhandler.SearchQueryHandler;
 import org.schabi.newpipe.extractor.MultiInfoItemsCollector;
 import org.schabi.newpipe.extractor.search.SearchExtractor;
@@ -22,8 +19,6 @@ import org.schabi.newpipe.extractor.utils.Utils;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
-import java.util.Collections;
-import java.util.List;
 
 public class BandcampSearchExtractor extends SearchExtractor {
 
@@ -32,24 +27,7 @@ public class BandcampSearchExtractor extends SearchExtractor {
         super(service, linkHandler);
     }
 
-    @NonNull
-    @Override
-    public String getSearchSuggestion() {
-        return Utils.EMPTY_STRING;
-    }
-
-    @Override
-    public boolean isCorrectedSearch() {
-        return false;
-    }
-
-    @Nonnull
-    @Override
-    public List<MetaInfo> getMetaInfo() throws ParsingException {
-        return Collections.emptyList();
-    }
-
-    public InfoItemsPage<InfoItem> getPage(final Page page)
+    public InfoItemsPage<InfoItem> getPageInternal(final Page page)
             throws IOException, ExtractionException {
         final MultiInfoItemsCollector collector = new MultiInfoItemsCollector(getServiceId());
         final Document d = Jsoup.parse(getDownloader().get(page.getUrl()).responseBody());
@@ -109,7 +87,7 @@ public class BandcampSearchExtractor extends SearchExtractor {
 
     @Nonnull
     @Override
-    public InfoItemsPage<InfoItem> getInitialPage() throws IOException, ExtractionException {
+    public InfoItemsPage<InfoItem> getInitialPageInternal() throws IOException, ExtractionException {
         return getPage(new Page(getUrl()));
     }
 

@@ -30,23 +30,13 @@ import org.schabi.newpipe.extractor.utils.Utils;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Collections.emptyList;
-import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.ChannelResponseData;
-import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.DISABLE_PRETTY_PRINT_PARAMETER;
-import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.YOUTUBEI_V1_URL;
-import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.addYoutubeHeaders;
-import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.fixThumbnailUrl;
-import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getChannelResponse;
-import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getKey;
-import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getTextFromObject;
-import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getValidJsonResponseBody;
-import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.prepareDesktopJsonBuilder;
-import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.resolveChannelId;
+import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.*;
 import static org.schabi.newpipe.extractor.utils.Utils.isNullOrEmpty;
 
 /*
@@ -105,6 +95,7 @@ public class YoutubeChannelExtractor extends ChannelExtractor {
 
     private String channelId;
 
+
     /**
      * If a channel is age-restricted, its pages are only accessible to logged-in and
      * age-verified users, we get an {@code channelAgeGateRenderer} in this case, containing only
@@ -123,19 +114,27 @@ public class YoutubeChannelExtractor extends ChannelExtractor {
     }
 
     @Override
-    public void onFetchPage(@Nonnull final Downloader downloader) throws IOException,
-            ExtractionException {
+    public void onFetchPage(@Nonnull final Downloader downloader) throws IOException, ExtractionException {
         final String channelPath = super.getId();
         final String id = resolveChannelId(channelPath);
-        final ChannelResponseData data = getChannelResponse(id, "EgZ2aWRlb3M%3D",
-                getExtractorLocalization(), getExtractorContentCountry());
 
-        redirectedChannelId = data.channelId;
-        jsonResponse = data.responseJson;
+        final byte[] body = JsonWriter.string(prepareDesktopJsonBuilder(
+                        getExtractorLocalization(), getExtractorContentCountry())
+                        .value("browseId", id)
+                        .value("params", "EgZ2aWRlb3PyBgQKAjoA")
+                        .done())
+                .getBytes(UTF_8);
+
+        jsonResponse = getJsonPostResponse("browse", body, getExtractorLocalization());
+        YoutubeParsingHelper.defaultAlertsCheck(jsonResponse);
+
+        redirectedChannelId = id;
+
         channelHeader = YoutubeChannelHelper.getChannelHeader(jsonResponse);
-        channelId = data.channelId;
+        channelId = id;
         channelAgeGateRenderer = YoutubeChannelHelper.getChannelAgeGateRenderer(jsonResponse);
     }
+
 
     @Nonnull
     @Override
@@ -309,30 +308,94 @@ public class YoutubeChannelExtractor extends ChannelExtractor {
             return UNKNOWN_SUBSCRIBER_COUNT;
         }
 
-        return metadataObject.getObject("contentMetadataViewModel")
-                .getArray("metadataRows")
-                .stream()
+        final JsonArray metadataRows = metadataObject.getObject("contentMetadataViewModel")
+                .getArray("metadataRows");
+
+        // Keep an explicit "subscriber" keyword check for English responses.
+        final long explicitSubscriberCount = metadataRows.stream()
                 .filter(JsonObject.class::isInstance)
                 .map(JsonObject.class::cast)
                 .flatMap(metadataRow -> metadataRow.getArray("metadataParts").stream())
                 .filter(JsonObject.class::isInstance)
                 .map(JsonObject.class::cast)
-                .filter(metadataPart -> metadataPart.has("text"))
-                .filter(metadataPart -> {
-                    JsonObject textObject = metadataPart.getObject("text");
-                    return textObject.has(CONTENT) &&
-                            textObject.getString(CONTENT).toLowerCase().contains("subscriber");
-                })
+                .filter(this::metadataPartContainsSubscriberKeyword)
+                .map(this::parseSubscriberCountFromMetadataPart)
+                .filter(subscriberCount -> subscriberCount != UNKNOWN_SUBSCRIBER_COUNT)
                 .findFirst()
-                .map(metadataPart -> {
-                    try {
-                        return Utils.mixedNumberWordToLong(metadataPart.getObject("text")
-                                .getString(CONTENT));
-                    } catch (NumberFormatException | ParsingException e) {
-                        return UNKNOWN_SUBSCRIBER_COUNT;
-                    }
-                })
                 .orElse(UNKNOWN_SUBSCRIBER_COUNT);
+        if (explicitSubscriberCount != UNKNOWN_SUBSCRIBER_COUNT) {
+            return explicitSubscriberCount;
+        }
+
+        // Fallback for localized responses where the keyword is not "subscriber".
+        for (final Object metadataRowObject : metadataRows) {
+            if (!(metadataRowObject instanceof JsonObject)) {
+                continue;
+            }
+
+            final JsonArray metadataParts = ((JsonObject) metadataRowObject)
+                    .getArray("metadataParts");
+            if (metadataParts == null || metadataParts.isEmpty()) {
+                continue;
+            }
+
+            if (metadataParts.size() > 1) {
+                final JsonObject firstMetadataPart = metadataParts.getObject(0);
+                if (firstMetadataPart.has("accessibilityLabel")) {
+                    final long subscriberCount =
+                            parseSubscriberCountFromMetadataPart(firstMetadataPart);
+                    if (subscriberCount != UNKNOWN_SUBSCRIBER_COUNT) {
+                        return subscriberCount;
+                    }
+                }
+            } else {
+                final JsonObject metadataPart = metadataParts.getObject(0);
+                if (metadataPart.has("accessibilityLabel")) {
+                    final long subscriberCount = parseSubscriberCountFromMetadataPart(metadataPart);
+                    if (subscriberCount != UNKNOWN_SUBSCRIBER_COUNT) {
+                        return subscriberCount;
+                    }
+                }
+            }
+        }
+
+        return UNKNOWN_SUBSCRIBER_COUNT;
+    }
+
+    private boolean metadataPartContainsSubscriberKeyword(@Nonnull final JsonObject metadataPart) {
+        if (!metadataPart.has("text")) {
+            return false;
+        }
+
+        final JsonObject textObject = metadataPart.getObject("text");
+        return textObject.has(CONTENT)
+                && textObject.getString(CONTENT).toLowerCase(Locale.ROOT).contains("subscriber");
+    }
+
+    private long parseSubscriberCountFromMetadataPart(@Nonnull final JsonObject metadataPart) {
+        if (!metadataPart.has("text")) {
+            return UNKNOWN_SUBSCRIBER_COUNT;
+        }
+
+        final JsonObject textObject = metadataPart.getObject("text");
+        String textContent = textObject.getString(CONTENT, "");
+        if (isNullOrEmpty(textContent)) {
+            try {
+                textContent = getTextFromObject(textObject);
+            } catch (final ParsingException e) {
+                return UNKNOWN_SUBSCRIBER_COUNT;
+            }
+        }
+
+        if (isNullOrEmpty(textContent) || textContent.startsWith("@")) {
+            return UNKNOWN_SUBSCRIBER_COUNT;
+        }
+
+        try {
+            return Utils.mixedNumberWordToLong(textContent);
+        } catch (final NumberFormatException | ParsingException e) {
+            return UNKNOWN_SUBSCRIBER_COUNT;
+        }
     }
 
 
@@ -419,32 +482,36 @@ public class YoutubeChannelExtractor extends ChannelExtractor {
         Page nextPage = null;
 
         if (getVideoTab() != null) {
+            final List<String> channelIds = new ArrayList<>();
+            channelIds.add(getName());
+            channelIds.add(getUrl());
+
             final JsonObject tabContent = getVideoTab().getObject("content");
+
             JsonArray items = tabContent
                     .getObject("sectionListRenderer")
-                    .getArray("contents").getObject(0).getObject("itemSectionRenderer")
-                    .getArray("contents").getObject(0).getObject("gridRenderer").getArray("items");
+                    .getArray("contents").getObject(0)
+                    .getObject("itemSectionRenderer")
+                    .getArray("contents").getObject(0)
+                    .getObject("gridRenderer")
+                    .getArray("items");
 
             if (items.isEmpty()) {
                 items = tabContent.getObject("richGridRenderer").getArray("contents");
             }
 
-            final List<String> channelIds = new ArrayList<>();
-            channelIds.add(getName());
-            channelIds.add(getUrl());
             final JsonObject continuation = collectStreamsFrom(collector, items, channelIds);
 
             nextPage = getNextPageFrom(continuation, channelIds);
         }
         if (ServiceList.YouTube.getFilterTypes().contains("channels")) {
-            collector.applyBlocking(ServiceList.YouTube.getStreamKeywordFilter(), ServiceList.YouTube.getStreamChannelFilter(), ServiceList.YouTube.isFilterShorts());
+            collector.applyBlocking(ServiceList.YouTube.getFilterConfig());
         }
         return new InfoItemsPage<>(collector, nextPage);
     }
 
     @Override
-    public InfoItemsPage<StreamInfoItem> getPage(final Page page) throws IOException,
-            ExtractionException {
+    public InfoItemsPage<StreamInfoItem> getPage(final Page page) throws IOException, ExtractionException {
         if (page == null || isNullOrEmpty(page.getUrl())) {
             throw new IllegalArgumentException("Page doesn't contain an URL");
         }
@@ -457,19 +524,22 @@ public class YoutubeChannelExtractor extends ChannelExtractor {
 
         final Response response = getDownloader().post(page.getUrl(), headers, page.getBody(),
                 getExtractorLocalization());
-
         final JsonObject ajaxJson = JsonUtils.toJsonObject(getValidJsonResponseBody(response));
 
         final JsonObject sectionListContinuation = ajaxJson.getArray("onResponseReceivedActions")
                 .getObject(0)
                 .getObject("appendContinuationItemsAction");
 
-        final JsonObject continuation = collectStreamsFrom(collector, sectionListContinuation
-                .getArray("continuationItems"), channelIds);
+        final JsonObject continuation = collectStreamsFrom(
+                collector,
+                sectionListContinuation.getArray("continuationItems"),
+                channelIds
+        );
 
         if (ServiceList.YouTube.getFilterTypes().contains("channels")) {
-            collector.applyBlocking(ServiceList.YouTube.getStreamKeywordFilter(), ServiceList.YouTube.getStreamChannelFilter(), ServiceList.YouTube.isFilterShorts());
+            collector.applyBlocking(ServiceList.YouTube.getFilterConfig());
         }
+
         return new InfoItemsPage<>(collector, getNextPageFrom(continuation, channelIds));
     }
 
@@ -489,11 +559,13 @@ public class YoutubeChannelExtractor extends ChannelExtractor {
                         getExtractorContentCountry())
                         .value("continuation", continuation)
                         .done())
-                .getBytes(StandardCharsets.UTF_8);
+                .getBytes(UTF_8);
 
-        return new Page(YOUTUBEI_V1_URL + "browse?key=" + getKey()
+        return new Page(YOUTUBEI_V1_URL + "browse?"
                 + DISABLE_PRETTY_PRINT_PARAMETER, null, channelIds, null, body);
     }
+
+
 
     /**
      * Collect streams from an array of items
@@ -505,7 +577,8 @@ public class YoutubeChannelExtractor extends ChannelExtractor {
      */
     private JsonObject collectStreamsFrom(@Nonnull final StreamInfoItemsCollector collector,
                                           @Nonnull final JsonArray videos,
-                                          @Nonnull final List<String> channelIds) {
+                                          @Nonnull final List<String> channelIds)
+    {
         collector.reset();
 
         final String uploaderName = channelIds.get(0);
@@ -514,11 +587,13 @@ public class YoutubeChannelExtractor extends ChannelExtractor {
 
         JsonObject continuation = null;
 
-        for (final Object object : videos) {
-            final JsonObject video = (JsonObject) object;
+        for (int i = 0; i < videos.size(); i++) {
+            final JsonObject video = videos.getObject(i);
+
             if (video.has("gridVideoRenderer")) {
                 collector.commit(new YoutubeStreamInfoItemExtractor(
-                        video.getObject("gridVideoRenderer"), timeAgoParser) {
+                        video.getObject("gridVideoRenderer"),
+                        timeAgoParser) {
                     @Override
                     public String getUploaderName() {
                         return uploaderName;
@@ -530,24 +605,42 @@ public class YoutubeChannelExtractor extends ChannelExtractor {
                     }
                 });
             } else if (video.has("richItemRenderer")) {
-                collector.commit(new YoutubeStreamInfoItemExtractor(
-                        video.getObject("richItemRenderer")
-                                .getObject("content").getObject("videoRenderer"), timeAgoParser) {
-                    @Override
-                    public String getUploaderName() {
-                        return uploaderName;
-                    }
+                final JsonObject content = video.getObject("richItemRenderer").getObject("content");
 
-                    @Override
-                    public String getUploaderUrl() {
-                        return uploaderUrl;
-                    }
-                });
+                if (content.has("videoRenderer")) {
+                    collector.commit(new YoutubeStreamInfoItemExtractor(
+                            content.getObject("videoRenderer"),
+                            timeAgoParser) {
+                        @Override
+                        public String getUploaderName() {
+                            return uploaderName;
+                        }
 
+                        @Override
+                        public String getUploaderUrl() {
+                            return uploaderUrl;
+                        }
+                    });
+                } else if (content.has("lockupViewModel")) {
+                    collector.commit(new YoutubeStreamInfoItemExtractor(
+                            content.getObject("lockupViewModel"),
+                            timeAgoParser) {
+                        @Override
+                        public String getUploaderName() {
+                            return uploaderName;
+                        }
+
+                        @Override
+                        public String getUploaderUrl() {
+                            return uploaderUrl;
+                        }
+                    });
+                }
             } else if (video.has("continuationItemRenderer")) {
                 continuation = video.getObject("continuationItemRenderer");
             }
         }
+
 
         return continuation;
     }
@@ -629,4 +722,5 @@ public class YoutubeChannelExtractor extends ChannelExtractor {
         this.videoTab = foundVideoTab;
         return foundVideoTab;
     }
+
 }

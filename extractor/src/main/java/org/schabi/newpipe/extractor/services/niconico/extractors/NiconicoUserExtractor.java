@@ -106,7 +106,7 @@ public class NiconicoUserExtractor extends ChannelExtractor {
 
         final String currentPageUrl = getLinkHandler().getUrl() + "/video?rss=2.0&page=1";
         if (ServiceList.NicoNico.getFilterTypes().contains("channels")) {
-            streamInfoItemsCollector.applyBlocking(ServiceList.NicoNico.getStreamKeywordFilter(), ServiceList.NicoNico.getStreamChannelFilter(), ServiceList.NicoNico.isFilterShorts());
+            streamInfoItemsCollector.applyBlocking(ServiceList.NicoNico.getFilterConfig());
         }
         return new InfoItemsPage<>(streamInfoItemsCollector,
                 getNextPageFromCurrentUrl(currentPageUrl));
@@ -135,7 +135,7 @@ public class NiconicoUserExtractor extends ChannelExtractor {
                     null);
         }
         if (ServiceList.NicoNico.getFilterTypes().contains("channels")) {
-            streamInfoItemsCollector.applyBlocking(ServiceList.NicoNico.getStreamKeywordFilter(), ServiceList.NicoNico.getStreamChannelFilter(), ServiceList.NicoNico.isFilterShorts());
+            streamInfoItemsCollector.applyBlocking(ServiceList.NicoNico.getFilterConfig());
         }
         return new InfoItemsPage<>(streamInfoItemsCollector,
                 getNextPageFromCurrentUrl(page.getUrl()));
@@ -205,9 +205,9 @@ public class NiconicoUserExtractor extends ChannelExtractor {
                 new ListLinkHandler(mylists, mylists, getLinkHandler().getId(),
                         Collections.singletonList(new FilterItem(Filter.ITEM_IDENTIFIER_UNKNOWN, ChannelTabs.PLAYLISTS)), null),
                 new ListLinkHandler(series, series, getLinkHandler().getId(),
-                        Collections.singletonList(new FilterItem(Filter.ITEM_IDENTIFIER_UNKNOWN, ChannelTabs.ALBUMS)), null),
-                new ListLinkHandler(lives, lives, getLinkHandler().getId(),
-                        Collections.singletonList(new FilterItem(Filter.ITEM_IDENTIFIER_UNKNOWN, ChannelTabs.LIVESTREAMS)), null)
+                        Collections.singletonList(new FilterItem(Filter.ITEM_IDENTIFIER_UNKNOWN, ChannelTabs.ALBUMS)), null)
+//                new ListLinkHandler(lives, lives, getLinkHandler().getId(),
+//                        Collections.singletonList(new FilterItem(Filter.ITEM_IDENTIFIER_UNKNOWN, ChannelTabs.LIVESTREAMS)), null)
         );
     }
 }

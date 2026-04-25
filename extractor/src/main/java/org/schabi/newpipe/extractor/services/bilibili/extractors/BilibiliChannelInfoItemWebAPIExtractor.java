@@ -19,8 +19,8 @@ import static org.schabi.newpipe.extractor.services.bilibili.utils.getDurationFr
 public class BilibiliChannelInfoItemWebAPIExtractor implements StreamInfoItemExtractor {
 
     protected final JsonObject item;
-    public String name;
-    public String face;
+    private final String name;
+    private final String face;
 
     public BilibiliChannelInfoItemWebAPIExtractor(final JsonObject json, String name, String face) {
         item = json;
@@ -58,12 +58,14 @@ public class BilibiliChannelInfoItemWebAPIExtractor implements StreamInfoItemExt
 
     @Override
     public long getViewCount() throws ParsingException {
-        return Optional.of(item.getLong("play")).orElse(item.getObject("stat").getLong("view"));
+        return Optional.of(item.getLong("play"))
+                .filter(playCount -> playCount > 0)
+                .orElseGet(() -> item.getObject("stat").getLong("view"));
     }
 
     @Override
     public String getUploaderName() throws ParsingException {
-        return name;
+        return Optional.of(item.getString("author")).orElse(name);
     }
 
     @Override

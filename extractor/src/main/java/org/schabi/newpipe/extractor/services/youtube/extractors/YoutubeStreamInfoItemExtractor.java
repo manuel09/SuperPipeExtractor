@@ -45,6 +45,9 @@ public class YoutubeStreamInfoItemExtractor implements StreamInfoItemExtractor {
     private final JsonObject videoInfo;
     private final TimeAgoParser timeAgoParser;
     private StreamType cachedStreamType;
+    private JsonObject tempVideoInfo;
+    private String fallbackUploaderName;
+    private String fallbackUploaderUrl;
 
     /**
      * Creates an extractor of StreamInfoItems from a YouTube page.
@@ -56,6 +59,22 @@ public class YoutubeStreamInfoItemExtractor implements StreamInfoItemExtractor {
                                           @Nullable final TimeAgoParser timeAgoParser) {
         this.videoInfo = videoInfoItem;
         this.timeAgoParser = timeAgoParser;
+    }
+
+    public YoutubeStreamInfoItemExtractor(final JsonObject videoInfoItem,
+                                          @Nullable final TimeAgoParser timeAgoParser,
+                                          @Nullable final JsonObject tempVideoInfoItem) {
+        this.videoInfo = videoInfoItem;
+        this.timeAgoParser = timeAgoParser;
+        this.tempVideoInfo = tempVideoInfoItem;
+    }
+
+    public void setFallbackUploaderName(final String name) {
+        this.fallbackUploaderName = name;
+    }
+
+    public void setFallbackUploaderUrl(final String url) {
+        this.fallbackUploaderUrl = url;
     }
 
     @Override
@@ -75,7 +94,8 @@ public class YoutubeStreamInfoItemExtractor implements StreamInfoItemExtractor {
             }
         }
 
-        for (final Object overlay : videoInfo.getArray("thumbnailOverlays")) {
+        final JsonArray thumbnailOverlays = videoInfo.getArray("thumbnailOverlays");
+        for (final Object overlay : thumbnailOverlays) {
             final String style = ((JsonObject) overlay)
                     .getObject("thumbnailOverlayTimeStatusRenderer")
                     .getString("style", "");
@@ -83,6 +103,50 @@ public class YoutubeStreamInfoItemExtractor implements StreamInfoItemExtractor {
                 cachedStreamType = StreamType.LIVE_STREAM;
                 return cachedStreamType;
             }
+        }
+
+        // lockupViewModel format
+        try {
+            final JsonArray overlays = videoInfo.getObject("contentImage")
+                    .getObject("thumbnailViewModel")
+                    .getArray("overlays");
+            for (final Object overlay : overlays) {
+                final JsonObject overlayObj = (JsonObject) overlay;
+                if (overlayObj.has("thumbnailBottomOverlayViewModel")) {
+                    final JsonArray lockupBadges = overlayObj.getObject("thumbnailBottomOverlayViewModel")
+                            .getArray("badges");
+                    for (final Object badge : lockupBadges) {
+                        final JsonObject badgeViewModel = ((JsonObject) badge).getObject("thumbnailBadgeViewModel");
+                        final String badgeStyle = badgeViewModel.getString("badgeStyle", "");
+                        if (badgeStyle.equals("BADGE_STYLE_TYPE_LIVE_NOW")
+                                || badgeStyle.equals("BADGE_STYLE_TYPE_LIVE")) {
+                            cachedStreamType = StreamType.LIVE_STREAM;
+                            return cachedStreamType;
+                        }
+                    }
+                }
+            }
+            // Also check metadata for "watching"
+            final JsonArray metadataRows = videoInfo.getObject("metadata")
+                    .getObject("lockupMetadataViewModel")
+                    .getObject("metadata")
+                    .getObject("contentMetadataViewModel")
+                    .getArray("metadataRows");
+            for (final Object row : metadataRows) {
+                final JsonArray metadataParts = ((JsonObject) row).getArray("metadataParts");
+                for (final Object part : metadataParts) {
+                    final String content = ((JsonObject) part)
+                            .getObject("text")
+                            .getString("content");
+                    if (content != null && (content.toLowerCase().contains("watching")
+                            || content.toLowerCase().contains("bukele"))) {
+                        cachedStreamType = StreamType.LIVE_STREAM;
+                        return cachedStreamType;
+                    }
+                }
+            }
+        } catch (final Exception ignored) {
+            // Not a lockupViewModel format, ignore
         }
 
         cachedStreamType = StreamType.VIDEO_STREAM;
@@ -98,7 +162,10 @@ public class YoutubeStreamInfoItemExtractor implements StreamInfoItemExtractor {
     @Override
     public String getUrl() throws ParsingException {
         try {
-            final String videoId = videoInfo.getString("videoId");
+            String videoId = videoInfo.getString("videoId");
+            if (isNullOrEmpty(videoId)) {
+                videoId = videoInfo.getString("contentId");
+            }
             return YoutubeStreamLinkHandlerFactory.getInstance().getUrl(videoId);
         } catch (final Exception e) {
             throw new ParsingException("Could not get url", e);
@@ -107,18 +174,34 @@ public class YoutubeStreamInfoItemExtractor implements StreamInfoItemExtractor {
 
     @Override
     public String getName() throws ParsingException {
-        String name = getTextFromObject(videoInfo.getObject("title"));
+        JsonObject source = (tempVideoInfo != null) ? tempVideoInfo : videoInfo;
+
+        String name = getTextFromObject(source.getObject("title"));
         if (!isNullOrEmpty(name)) {
             return name;
         }
 
-        name = getTextFromObject(videoInfo.getObject("headline"));
+        name = getTextFromObject(source.getObject("headline"));
         if (!isNullOrEmpty(name)) {
             return name;
+        }
+
+        // lockupViewModel format
+        try {
+            name = source.getObject("metadata")
+                    .getObject("lockupMetadataViewModel")
+                    .getObject("title")
+                    .getString("content");
+            if (!isNullOrEmpty(name)) {
+                return name;
+            }
+        } catch (final Exception ignored) {
+            // Not a lockupViewModel format
         }
 
         throw new ParsingException("Could not get name");
     }
+
 
     @Override
     public long getDuration() throws ParsingException {
@@ -133,6 +216,41 @@ public class YoutubeStreamInfoItemExtractor implements StreamInfoItemExtractor {
                 if (((JsonObject) thumbnailOverlay).has("thumbnailOverlayTimeStatusRenderer")) {
                     duration = getTextFromObject(((JsonObject) thumbnailOverlay)
                             .getObject("thumbnailOverlayTimeStatusRenderer").getObject("text"));
+                }
+            }
+
+            if (isNullOrEmpty(duration)) {
+                // lockupViewModel format: contentImage.thumbnailViewModel.overlays
+                // Try two paths
+                try {
+                    final JsonArray overlays = videoInfo.getObject("contentImage")
+                            .getObject("thumbnailViewModel")
+                            .getArray("overlays");
+                    for (final Object overlay : overlays) {
+                        final JsonObject overlayObj = (JsonObject) overlay;
+                        // Path 1: thumbnailOverlayBadgeViewModel
+                        if (overlayObj.has("thumbnailOverlayBadgeViewModel")) {
+                            duration = overlayObj.getObject("thumbnailOverlayBadgeViewModel")
+                                    .getArray("thumbnailBadges")
+                                    .getObject(0)
+                                    .getObject("thumbnailBadgeViewModel")
+                                    .getString("text");
+                            if (!isNullOrEmpty(duration)) break;
+                        }
+                        // Path 2: thumbnailBottomOverlayViewModel
+                        if (overlayObj.has("thumbnailBottomOverlayViewModel")) {
+                            final JsonArray badges = overlayObj.getObject("thumbnailBottomOverlayViewModel")
+                                    .getArray("badges");
+                            if (!badges.isEmpty()) {
+                                duration = badges.getObject(0)
+                                        .getObject("thumbnailBadgeViewModel")
+                                        .getString("text");
+                                if (!isNullOrEmpty(duration)) break;
+                            }
+                        }
+                    }
+                } catch (final Exception ignored) {
+                    // Not a lockupViewModel format
                 }
             }
 
@@ -175,6 +293,9 @@ public class YoutubeStreamInfoItemExtractor implements StreamInfoItemExtractor {
                 name = getTextFromObject(videoInfo.getObject("shortBylineText"));
 
                 if (isNullOrEmpty(name)) {
+                    if (!isNullOrEmpty(fallbackUploaderName)) {
+                        return fallbackUploaderName;
+                    }
                     throw new ParsingException("Could not get uploader name");
                 }
             }
@@ -197,6 +318,9 @@ public class YoutubeStreamInfoItemExtractor implements StreamInfoItemExtractor {
                         .getArray("runs").getObject(0).getObject("navigationEndpoint"));
 
                 if (isNullOrEmpty(url)) {
+                    if (!isNullOrEmpty(fallbackUploaderUrl)) {
+                        return fallbackUploaderUrl;
+                    }
                     throw new ParsingException("Could not get uploader url");
                 }
             }
@@ -245,6 +369,29 @@ public class YoutubeStreamInfoItemExtractor implements StreamInfoItemExtractor {
             return publishedTimeText;
         }
 
+        // lockupViewModel format - iterate through all metadata like PipePipe
+        try {
+            final JsonArray metadataRows = videoInfo.getObject("metadata")
+                    .getObject("lockupMetadataViewModel")
+                    .getObject("metadata")
+                    .getObject("contentMetadataViewModel")
+                    .getArray("metadataRows");
+            for (final Object row : metadataRows) {
+                final JsonArray metadataParts = ((JsonObject) row).getArray("metadataParts");
+                for (final Object part : metadataParts) {
+                    final String content = ((JsonObject) part)
+                            .getObject("text")
+                            .getString("content");
+                    if (content != null && (content.toLowerCase().contains("ago")
+                            || content.toLowerCase().endsWith("dlule"))) {
+                        return content;
+                    }
+                }
+            }
+        } catch (final Exception ignored) {
+            // Not a lockupViewModel format
+        }
+
         final String shortsTimestampText = getTextFromObject(videoInfo
                 .getObject("navigationEndpoint")
                 .getObject("reelWatchEndpoint").getObject("overlay")
@@ -290,15 +437,44 @@ public class YoutubeStreamInfoItemExtractor implements StreamInfoItemExtractor {
             }
 
             if (!videoInfo.has("viewCountText")) {
+                // lockupViewModel format - iterate through all metadata like PipePipe
+                final JsonArray metadataRows = videoInfo.getObject("metadata")
+                        .getObject("lockupMetadataViewModel")
+                        .getObject("metadata")
+                        .getObject("contentMetadataViewModel")
+                        .getArray("metadataRows");
+                for (final Object row : metadataRows) {
+                    final JsonArray metadataParts = ((JsonObject) row).getArray("metadataParts");
+                    for (final Object part : metadataParts) {
+                        final String content = ((JsonObject) part)
+                                .getObject("text")
+                                .getString("content");
+                        if (content != null && (content.toLowerCase().contains("view")
+                                || content.toLowerCase().contains("ukubukwa")
+                                || content.toLowerCase().contains("no views")
+                                || content.toLowerCase().contains("akukho"))) {
+                            if (content.toLowerCase().contains("no views")
+                                    || content.toLowerCase().contains("akukho ukubukwa")) {
+                                return 0;
+                            } else if (content.toLowerCase().contains("recommended")
+                                    || content.toLowerCase().contains("okutusiwe")) {
+                                return -1;
+                            }
+                            return Utils.mixedNumberWordToLong(content);
+                        }
+                    }
+                }
                 // This object is null when a video has its views hidden.
                 return -1;
             }
 
             final String viewCount = getTextFromObject(videoInfo.getObject("viewCountText"));
 
-            if (viewCount.toLowerCase().contains("no views")) {
+            if (viewCount.toLowerCase().contains("no views")
+                    || viewCount.toLowerCase().contains("akukho ukubukwa")) {
                 return 0;
-            } else if (viewCount.toLowerCase().contains("recommended")) {
+            } else if (viewCount.toLowerCase().contains("recommended")
+                    || viewCount.toLowerCase().contains("okutusiwe")) {
                 return -1;
             }
 
@@ -367,6 +543,19 @@ public class YoutubeStreamInfoItemExtractor implements StreamInfoItemExtractor {
 
             if (!isShort) {
                 isShort = videoInfo.getObject("navigationEndpoint").has("reelWatchEndpoint");
+            }
+
+            if (!isShort) {
+                // lockupViewModel format
+                final String lockupWebPageType = videoInfo.getObject("rendererContext")
+                        .getObject("commandContext")
+                        .getObject("onTap")
+                        .getObject("innertubeCommand")
+                        .getObject("commandMetadata")
+                        .getObject("webCommandMetadata")
+                        .getString("webPageType");
+                isShort = !isNullOrEmpty(lockupWebPageType)
+                        && lockupWebPageType.equals("WEB_PAGE_TYPE_SHORTS");
             }
 
             if (!isShort) {

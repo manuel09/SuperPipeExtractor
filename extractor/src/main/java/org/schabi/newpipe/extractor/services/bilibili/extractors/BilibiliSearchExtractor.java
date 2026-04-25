@@ -1,9 +1,6 @@
 package org.schabi.newpipe.extractor.services.bilibili.extractors;
 
 import java.io.IOException;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
 
 import com.grack.nanojson.JsonArray;
 import com.grack.nanojson.JsonObject;
@@ -13,12 +10,11 @@ import com.grack.nanojson.JsonParserException;
 import org.schabi.newpipe.extractor.*;
 import org.schabi.newpipe.extractor.downloader.Downloader;
 import org.schabi.newpipe.extractor.exceptions.ExtractionException;
-import org.schabi.newpipe.extractor.exceptions.ParsingException;
-import org.schabi.newpipe.extractor.exceptions.ReCaptchaException;
 import org.schabi.newpipe.extractor.linkhandler.SearchQueryHandler;
 import org.schabi.newpipe.extractor.search.SearchExtractor;
 
-import static org.schabi.newpipe.extractor.services.bilibili.BilibiliService.getUpToDateHeaders;
+import static org.schabi.newpipe.extractor.services.bilibili.BilibiliService.getDefaultCookies;
+import static org.schabi.newpipe.extractor.services.bilibili.BilibiliService.getHeaders;
 
 public class BilibiliSearchExtractor extends SearchExtractor{
 
@@ -29,28 +25,13 @@ public class BilibiliSearchExtractor extends SearchExtractor{
     }
 
     @Override
-    public String getSearchSuggestion() throws ParsingException {
-        return "";
-    }
-
-    @Override
-    public boolean isCorrectedSearch() throws ParsingException {
-        return false;
-    }
-
-    @Override
-    public List<MetaInfo> getMetaInfo() throws ParsingException {
-        return Collections.emptyList();
-    }
-
-    @Override
-    public InfoItemsPage<InfoItem> getInitialPage() throws IOException, ExtractionException {
-        if(searchCollection.getObject("data").getArray("result").size() == 0){
+    public InfoItemsPage<InfoItem> getInitialPageInternal() throws IOException, ExtractionException {
+        if(searchCollection.getObject("data").getArray("result").isEmpty()){
             return new InfoItemsPage<>(new MultiInfoItemsCollector(getServiceId()), null);
         }
         int currentPage = 1;
         String nextPage = getUrl().replace(String.format("page=%s", 1), String.format("page=%s", String.valueOf(currentPage + 1)));
-        return new InfoItemsPage<>(getCommittedCollector(), new Page(nextPage));
+        return new InfoItemsPage<>(getCommittedCollector(), new Page(nextPage, getDefaultCookies()));
     }
 
     private MultiInfoItemsCollector getCommittedCollector(){
@@ -73,41 +54,36 @@ public class BilibiliSearchExtractor extends SearchExtractor{
                     collector.commit(new BilibiliPremiumContentInfoItemExtractor(result.getObject(i)));
             }
         }
-        if (ServiceList.BiliBili.getFilterTypes().contains("search_result")) {
-            collector.applyBlocking(ServiceList.BiliBili.getStreamKeywordFilter(), ServiceList.BiliBili.getStreamChannelFilter(), ServiceList.BiliBili.isFilterShorts());
-        }
         return collector;
     }
 
     @Override
-    public InfoItemsPage<InfoItem> getPage(Page page) throws IOException, ExtractionException {
+    public InfoItemsPage<InfoItem> getPageInternal(Page page) throws IOException, ExtractionException {
         try {
-            final String html = getDownloader().get(page.getUrl(), getUpToDateHeaders()).responseBody();
+            final String html = getDownloader().get(page.getUrl(), getHeaders(getOriginalUrl())).responseBody();
             searchCollection = JsonParser.object().from(html);
         } catch (JsonParserException e) {
             e.printStackTrace();
         }
 
-        if(searchCollection.getObject("data").getArray("result").size() == 0){
+        if(searchCollection.getObject("data").getArray("result").isEmpty()){
             return new InfoItemsPage<>(new MultiInfoItemsCollector(getServiceId()), null);
         }
 
         String currentPageString = page.getUrl().split("page=")[page.getUrl().split("page=").length-1];
         int currentPage = Integer.parseInt(currentPageString);
         String nextPage = page.getUrl().replace(String.format("page=%s", currentPageString), String.format("page=%s", String.valueOf(currentPage + 1)));
-        return new InfoItemsPage<>(getCommittedCollector(), new Page(nextPage));
+        return new InfoItemsPage<>(getCommittedCollector(), new Page(nextPage, getDefaultCookies()));
     }
 
     @Override
     public void onFetchPage(Downloader downloader) throws IOException, ExtractionException {
         try {
             final String response = getDownloader().get(
-                    getLinkHandler().getUrl(), getUpToDateHeaders()).responseBody();
+                    getLinkHandler().getUrl(), getHeaders(getOriginalUrl())).responseBody();
             searchCollection = JsonParser.object().from(response);
         } catch (final JsonParserException e) {
             throw new ExtractionException("could not parse search results.");
         }
     }
-
-
 }

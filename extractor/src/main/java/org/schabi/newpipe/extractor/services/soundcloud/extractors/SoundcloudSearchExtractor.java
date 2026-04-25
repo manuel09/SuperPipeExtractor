@@ -8,7 +8,6 @@ import com.grack.nanojson.JsonParserException;
 import org.schabi.newpipe.extractor.InfoItem;
 import org.schabi.newpipe.extractor.InfoItemExtractor;
 import org.schabi.newpipe.extractor.InfoItemsCollector;
-import org.schabi.newpipe.extractor.MetaInfo;
 import org.schabi.newpipe.extractor.Page;
 import org.schabi.newpipe.extractor.StreamingService;
 import org.schabi.newpipe.extractor.downloader.Downloader;
@@ -24,8 +23,6 @@ import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.net.MalformedURLException;
 import java.net.URL;
-import java.util.Collections;
-import java.util.List;
 import java.util.function.IntUnaryOperator;
 
 import static org.schabi.newpipe.extractor.services.soundcloud.linkHandler.SoundcloudSearchQueryHandlerFactory.ITEMS_PER_PAGE;
@@ -33,7 +30,9 @@ import static org.schabi.newpipe.extractor.utils.Utils.EMPTY_STRING;
 import static org.schabi.newpipe.extractor.utils.Utils.isNullOrEmpty;
 
 public class SoundcloudSearchExtractor extends SearchExtractor {
-    private JsonArray initialSearchCollection;
+    private JsonObject initialSearchObject;
+    private static final String COLLECTION = "collection";
+    private static final String TOTAL_RESULTS = "total_results";
 
     public SoundcloudSearchExtractor(final StreamingService service,
                                      final SearchQueryHandler linkHandler) {
@@ -42,31 +41,19 @@ public class SoundcloudSearchExtractor extends SearchExtractor {
 
     @Nonnull
     @Override
-    public String getSearchSuggestion() {
-        return "";
+    public InfoItemsPage<InfoItem> getInitialPageInternal() throws IOException, ExtractionException {
+        if (initialSearchObject.getInt(TOTAL_RESULTS) > ITEMS_PER_PAGE) {
+            return new InfoItemsPage<>(
+                    collectItems(initialSearchObject.getArray(COLLECTION)),
+                    getNextPageFromCurrentUrl(getUrl(), currentOffset -> ITEMS_PER_PAGE));
+        } else {
+            return new InfoItemsPage<>(
+                    collectItems(initialSearchObject.getArray(COLLECTION)), null);
+        }
     }
 
     @Override
-    public boolean isCorrectedSearch() {
-        return false;
-    }
-
-    @Nonnull
-    @Override
-    public List<MetaInfo> getMetaInfo() {
-        return Collections.emptyList();
-    }
-
-    @Nonnull
-    @Override
-    public InfoItemsPage<InfoItem> getInitialPage() throws IOException, ExtractionException {
-        return new InfoItemsPage<>(
-                collectItems(initialSearchCollection),
-                getNextPageFromCurrentUrl(getUrl(), currentOffset -> ITEMS_PER_PAGE));
-    }
-
-    @Override
-    public InfoItemsPage<InfoItem> getPage(final Page page) throws IOException,
+    public InfoItemsPage<InfoItem> getPageInternal(final Page page) throws IOException,
             ExtractionException {
         if (page == null || isNullOrEmpty(page.getUrl())) {
             throw new IllegalArgumentException("Page doesn't contain an URL");
@@ -74,10 +61,13 @@ public class SoundcloudSearchExtractor extends SearchExtractor {
 
         final Downloader dl = getDownloader();
         final JsonArray searchCollection;
+        final int totalResults;
         try {
             final String response = dl.get(page.getUrl(), getExtractorLocalization())
                     .responseBody();
-            searchCollection = JsonParser.object().from(response).getArray("collection");
+            final JsonObject result = JsonParser.object().from(response);
+            searchCollection = result.getArray(COLLECTION);
+            totalResults = result.getInt(TOTAL_RESULTS);
         } catch (final JsonParserException e) {
             throw new ParsingException("Could not parse json response", e);
         }
@@ -85,9 +75,12 @@ public class SoundcloudSearchExtractor extends SearchExtractor {
             return InfoItemsPage.emptyPage(); // no more search results
         }
 
-        return new InfoItemsPage<>(collectItems(searchCollection),
-                getNextPageFromCurrentUrl(page.getUrl(),
-                        currentOffset -> currentOffset + ITEMS_PER_PAGE));
+        if (getOffsetFromUrl(page.getUrl()) + ITEMS_PER_PAGE < totalResults) {
+            return new InfoItemsPage<>(collectItems(searchCollection),
+                    getNextPageFromCurrentUrl(page.getUrl(),
+                            currentOffset -> currentOffset + ITEMS_PER_PAGE));
+        }
+        return new InfoItemsPage<>(collectItems(searchCollection), null);
     }
 
     @Override
@@ -97,12 +90,12 @@ public class SoundcloudSearchExtractor extends SearchExtractor {
         final String url = getUrl();
         try {
             final String response = dl.get(url, getExtractorLocalization()).responseBody();
-            initialSearchCollection = JsonParser.object().from(response).getArray("collection");
+            initialSearchObject = JsonParser.object().from(response);
         } catch (final JsonParserException e) {
             throw new ParsingException("Could not parse json response", e);
         }
 
-        if (initialSearchCollection.isEmpty()) {
+        if (initialSearchObject.getArray(COLLECTION).isEmpty()) {
             throw new SearchExtractor.NothingFoundException("Nothing found");
         }
     }
@@ -136,13 +129,20 @@ public class SoundcloudSearchExtractor extends SearchExtractor {
 
     private Page getNextPageFromCurrentUrl(final String currentUrl,
                                            final IntUnaryOperator newPageOffsetCalculator)
-            throws MalformedURLException, UnsupportedEncodingException {
-        final int currentPageOffset = Integer.parseInt(
-                    Parser.compatParseMap(new URL(currentUrl).getQuery()).get("offset"));
+            throws ParsingException {
+        final int currentPageOffset = getOffsetFromUrl(currentUrl);
 
         return new Page(
                 currentUrl.replace(
                         "&offset=" + currentPageOffset,
                         "&offset=" + newPageOffsetCalculator.applyAsInt(currentPageOffset)));
+    }
+
+    private int getOffsetFromUrl(final String url) throws ParsingException {
+        try {
+            return Integer.parseInt(Parser.compatParseMap(new URL(url).getQuery()).get("offset"));
+        } catch (MalformedURLException | UnsupportedEncodingException e) {
+            throw new ParsingException("Could not get offset from page URL", e);
+        }
     }
 }

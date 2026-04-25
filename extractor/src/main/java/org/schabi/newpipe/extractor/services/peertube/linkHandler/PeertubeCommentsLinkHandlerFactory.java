@@ -6,7 +6,9 @@ import org.schabi.newpipe.extractor.ServiceList;
 import org.schabi.newpipe.extractor.exceptions.FoundAdException;
 import org.schabi.newpipe.extractor.exceptions.ParsingException;
 import org.schabi.newpipe.extractor.linkhandler.ListLinkHandlerFactory;
+import org.schabi.newpipe.extractor.utils.Utils;
 
+import java.net.URL;
 import java.util.List;
 
 public final class PeertubeCommentsLinkHandlerFactory extends ListLinkHandlerFactory {
@@ -29,7 +31,16 @@ public final class PeertubeCommentsLinkHandlerFactory extends ListLinkHandlerFac
 
     @Override
     public boolean onAcceptUrl(final String url) throws FoundAdException {
-        return url.contains("/videos/") || url.contains("/w/");
+        try {
+            final URL urlObj = Utils.stringToURL(url);
+            if (!Utils.isHTTP(urlObj)) {
+                return false;
+            }
+            final String path = urlObj.getPath();
+            return path.startsWith("/videos/") || path.startsWith("/w/");
+        } catch (final IllegalArgumentException | java.net.MalformedURLException e) {
+            return false;
+        }
     }
 
     @Override

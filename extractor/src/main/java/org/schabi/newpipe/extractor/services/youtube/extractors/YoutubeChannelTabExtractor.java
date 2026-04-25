@@ -28,7 +28,6 @@ import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.YOUTUBEI_V1_URL;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.addYoutubeHeaders;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getChannelResponse;
-import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getKey;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getValidJsonResponseBody;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.prepareDesktopJsonBuilder;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.resolveChannelId;
@@ -147,7 +146,7 @@ public class YoutubeChannelTabExtractor extends ChannelTabExtractor {
             nextPage = getNextPageFrom(continuation, channelIds);
         }
         if (ServiceList.YouTube.getFilterTypes().contains("channels")) {
-            collector.applyBlocking(ServiceList.YouTube.getStreamKeywordFilter(), ServiceList.YouTube.getStreamChannelFilter(), ServiceList.YouTube.isFilterShorts());
+            collector.applyBlocking(ServiceList.YouTube.getFilterConfig());
         }
         return new InfoItemsPage<>(collector, nextPage);
     }
@@ -177,7 +176,7 @@ public class YoutubeChannelTabExtractor extends ChannelTabExtractor {
         final JsonObject continuation = collectItemsFrom(collector, sectionListContinuation
                 .getArray("continuationItems"), channelIds);
         if (ServiceList.YouTube.getFilterTypes().contains("channels")) {
-            collector.applyBlocking(ServiceList.YouTube.getStreamKeywordFilter(), ServiceList.YouTube.getStreamChannelFilter(), ServiceList.YouTube.isFilterShorts());
+            collector.applyBlocking(ServiceList.YouTube.getFilterConfig());
         }
         return new InfoItemsPage<>(collector,
                 getNextPageFrom(continuation, channelIds));
@@ -338,9 +337,17 @@ public class YoutubeChannelTabExtractor extends ChannelTabExtractor {
             return item.getObject("continuationItemRenderer");
         } else if (item.has("lockupViewModel")) {
             final JsonObject lockupViewModel = item.getObject("lockupViewModel");
-            if ("LOCKUP_CONTENT_TYPE_PLAYLIST".equals(lockupViewModel.getString("contentType"))) {
+            final String contentType = lockupViewModel.getString("contentType");
+            if ("LOCKUP_CONTENT_TYPE_PLAYLIST".equals(contentType)
+                    || "LOCKUP_CONTENT_TYPE_PODCAST".equals(contentType)) {
+                String channelName;
+                try {
+                     channelName = getChannelName();
+                } catch (Exception e) {
+                    channelName = channelIds.get(0);
+                }
                 commitPlaylistLockup(collector, lockupViewModel,
-                        getChannelName(), null);
+                        channelName, null);
             }
         }
         return null;
@@ -359,12 +366,12 @@ public class YoutubeChannelTabExtractor extends ChannelTabExtractor {
                 .getString("token");
 
         final byte[] body = JsonWriter.string(prepareDesktopJsonBuilder(getExtractorLocalization(),
-                        getExtractorContentCountry(), visitorData)
+                        getExtractorContentCountry())
                         .value("continuation", continuation)
                         .done())
                 .getBytes(StandardCharsets.UTF_8);
 
-        return new Page(YOUTUBEI_V1_URL + "browse?key=" + getKey()
+        return new Page(YOUTUBEI_V1_URL + "browse?"
                 + DISABLE_PRETTY_PRINT_PARAMETER, null, channelIds, null, body);
     }
 }

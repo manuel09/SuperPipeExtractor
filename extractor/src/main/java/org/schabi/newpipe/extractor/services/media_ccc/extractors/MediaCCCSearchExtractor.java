@@ -7,7 +7,6 @@ import com.grack.nanojson.JsonParser;
 import com.grack.nanojson.JsonParserException;
 
 import org.schabi.newpipe.extractor.InfoItem;
-import org.schabi.newpipe.extractor.MetaInfo;
 import org.schabi.newpipe.extractor.Page;
 import org.schabi.newpipe.extractor.StreamingService;
 import org.schabi.newpipe.extractor.channel.ChannelInfoItem;
@@ -21,7 +20,6 @@ import org.schabi.newpipe.extractor.services.media_ccc.extractors.infoItems.Medi
 import org.schabi.newpipe.extractor.services.media_ccc.linkHandler.MediaCCCConferencesListLinkHandlerFactory;
 
 import java.io.IOException;
-import java.util.Collections;
 import java.util.List;
 
 import javax.annotation.Nonnull;
@@ -46,23 +44,6 @@ public class MediaCCCSearchExtractor extends SearchExtractor {
         }
     }
 
-    @Nonnull
-    @Override
-    public String getSearchSuggestion() {
-        return "";
-    }
-
-    @Override
-    public boolean isCorrectedSearch() {
-        return false;
-    }
-
-    @Nonnull
-    @Override
-    public List<MetaInfo> getMetaInfo() {
-        return Collections.emptyList();
-    }
-
     private FilterItem getContentFilter() {
         // TODO check if getLinkHandler().getContentFilters() not empty
         final FilterItem filterItem = getLinkHandler().getContentFilters().get(0);
@@ -71,7 +52,7 @@ public class MediaCCCSearchExtractor extends SearchExtractor {
     }
     @Nonnull
     @Override
-    public InfoItemsPage<InfoItem> getInitialPage() {
+    public InfoItemsPage<InfoItem> getInitialPageInternal() {
         final MultiInfoItemsCollector searchItems = new MultiInfoItemsCollector(getServiceId());
 
 
@@ -99,7 +80,7 @@ public class MediaCCCSearchExtractor extends SearchExtractor {
     }
 
     @Override
-    public InfoItemsPage<InfoItem> getPage(final Page page) {
+    public InfoItemsPage<InfoItem> getPageInternal(final Page page) {
         return InfoItemsPage.emptyPage();
     }
 

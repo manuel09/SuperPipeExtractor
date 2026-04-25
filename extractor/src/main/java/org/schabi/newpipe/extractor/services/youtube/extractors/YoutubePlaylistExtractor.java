@@ -6,7 +6,6 @@ import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.extractPlaylistTypeFromPlaylistUrl;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.fixThumbnailUrl;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getJsonPostResponse;
-import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getKey;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getTextFromObject;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getUrlFromNavigationEndpoint;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getValidJsonResponseBody;
@@ -64,7 +63,7 @@ public class YoutubePlaylistExtractor extends PlaylistExtractor {
     @Override
     public void onFetchPage(@Nonnull final Downloader downloader) throws IOException,
             ExtractionException {
-        final Localization localization = getExtractorLocalization();
+        final Localization localization = getService().getLocalization();
         final byte[] body = JsonWriter.string(prepareDesktopJsonBuilder(localization,
                         getExtractorContentCountry())
                         .value("browseId", "VL" + getId())
@@ -275,6 +274,38 @@ public class YoutubePlaylistExtractor extends PlaylistExtractor {
             nextPage = getNextPageFrom(videosArray);
         }
 
+        // Handle richGridRenderer for Shorts playlists
+        final JsonObject richGridObject = contents.stream()
+                .filter(JsonObject.class::isInstance)
+                .map(JsonObject.class::cast)
+                .map(content -> content.getObject("itemSectionRenderer")
+                        .getArray("contents")
+                        .getObject(0))
+                .filter(contentItemSectionRendererContents ->
+                        contentItemSectionRendererContents.has("richGridRenderer"))
+                .findFirst()
+                .orElse(null);
+
+        if (richGridObject != null) {
+            final JsonArray richGridContents = richGridObject
+                    .getObject("richGridRenderer")
+                    .getArray("contents");
+            
+            richGridContents.stream()
+                    .filter(JsonObject.class::isInstance)
+                    .map(JsonObject.class::cast)
+                    .filter(item -> item.has("richItemRenderer"))
+                    .map(item -> item.getObject("richItemRenderer").getObject("content"))
+                    .filter(content -> content.has("shortsLockupViewModel"))
+                    .forEach(content -> {
+                        collector.commit(new YoutubeShortsInfoItemExtractor(
+                                content.getObject("shortsLockupViewModel")));
+                    });
+            
+            // Get next page from sectionListRenderer level for richGridRenderer
+            nextPage = getNextPageFrom(contents);
+        }
+
         return new InfoItemsPage<>(collector, nextPage);
     }
 
@@ -290,7 +321,7 @@ public class YoutubePlaylistExtractor extends PlaylistExtractor {
         addYoutubeHeaders(headers);
 
         final Response response = getDownloader().post(page.getUrl(), headers, page.getBody(),
-                getExtractorLocalization());
+                getService().getLocalization());
         final JsonObject ajaxJson = JsonUtils.toJsonObject(getValidJsonResponseBody(response));
 
         final JsonArray continuation = ajaxJson.getArray("onResponseReceivedActions")
@@ -344,7 +375,7 @@ public class YoutubePlaylistExtractor extends PlaylistExtractor {
             }
 
             final byte[] body = JsonWriter.string(prepareDesktopJsonBuilder(
-                            getExtractorLocalization(), getExtractorContentCountry())
+                            getService().getLocalization(), getExtractorContentCountry())
                             .value("continuation", continuation)
                             .done())
                     .getBytes(StandardCharsets.UTF_8);
@@ -358,13 +389,45 @@ public class YoutubePlaylistExtractor extends PlaylistExtractor {
                                     @Nonnull final JsonArray videos) {
         final TimeAgoParser timeAgoParser = getTimeAgoParser();
 
+        String playlistUploaderName = null;
+        String playlistUploaderUrl = null;
+        try {
+            playlistUploaderName = getUploaderName();
+            playlistUploaderUrl = getUploaderUrl();
+        } catch (final Exception ignored) {
+        }
+        final String fallbackName = playlistUploaderName;
+        final String fallbackUrl = playlistUploaderUrl;
+
+        // Handle traditional playlistVideoRenderer
         videos.stream()
                 .filter(JsonObject.class::isInstance)
                 .map(JsonObject.class::cast)
                 .filter(video -> video.has(PLAYLIST_VIDEO_RENDERER))
-                .map(video -> new YoutubeStreamInfoItemExtractor(
-                        video.getObject(PLAYLIST_VIDEO_RENDERER), timeAgoParser))
+                .map(video -> {
+                    final YoutubeStreamInfoItemExtractor extractor = new YoutubeStreamInfoItemExtractor(
+                            video.getObject(PLAYLIST_VIDEO_RENDERER), timeAgoParser);
+                    if (fallbackName != null) {
+                        extractor.setFallbackUploaderName(fallbackName);
+                    }
+                    if (fallbackUrl != null) {
+                        extractor.setFallbackUploaderUrl(fallbackUrl);
+                    }
+                    return extractor;
+                })
                 .forEachOrdered(collector::commit);
+        
+        // Handle Shorts in richItemRenderer format (for continuation responses)
+        videos.stream()
+                .filter(JsonObject.class::isInstance)
+                .map(JsonObject.class::cast)
+                .filter(video -> video.has("richItemRenderer"))
+                .map(video -> video.getObject("richItemRenderer").getObject("content"))
+                .filter(content -> content.has("shortsLockupViewModel"))
+                .forEach(content -> {
+                    collector.commit(new YoutubeShortsInfoItemExtractor(
+                            content.getObject("shortsLockupViewModel")));
+                });
     }
 
     @Nonnull

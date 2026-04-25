@@ -4,7 +4,6 @@ import com.grack.nanojson.JsonObject;
 import com.grack.nanojson.JsonParser;
 
 import org.schabi.newpipe.extractor.InfoItem;
-import org.schabi.newpipe.extractor.MetaInfo;
 import org.schabi.newpipe.extractor.Page;
 import org.schabi.newpipe.extractor.StreamingService;
 import org.schabi.newpipe.extractor.downloader.Downloader;
@@ -18,8 +17,6 @@ import org.schabi.newpipe.extractor.services.peertube.PeertubeParsingHelper;
 import org.schabi.newpipe.extractor.utils.Utils;
 
 import java.io.IOException;
-import java.util.Collections;
-import java.util.List;
 
 import javax.annotation.Nonnull;
 
@@ -48,30 +45,13 @@ public class PeertubeSearchExtractor extends SearchExtractor {
 
     @Nonnull
     @Override
-    public String getSearchSuggestion() {
-        return "";
-    }
-
-    @Override
-    public boolean isCorrectedSearch() {
-        return false;
-    }
-
-    @Nonnull
-    @Override
-    public List<MetaInfo> getMetaInfo() {
-        return Collections.emptyList();
-    }
-
-    @Nonnull
-    @Override
-    public InfoItemsPage<InfoItem> getInitialPage() throws IOException, ExtractionException {
+    public InfoItemsPage<InfoItem> getInitialPageInternal() throws IOException, ExtractionException {
         return getPage(new Page(getUrl() + "&" + START_KEY + "=0&"
                 + COUNT_KEY + "=" + ITEMS_PER_PAGE));
     }
 
     @Override
-    public InfoItemsPage<InfoItem> getPage(final Page page)
+    public InfoItemsPage<InfoItem> getPageInternal(final Page page)
             throws IOException, ExtractionException {
         if (page == null || isNullOrEmpty(page.getUrl())) {
             throw new IllegalArgumentException("Page doesn't contain an URL");

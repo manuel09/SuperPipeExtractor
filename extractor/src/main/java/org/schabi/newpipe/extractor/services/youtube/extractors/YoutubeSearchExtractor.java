@@ -3,7 +3,6 @@ package org.schabi.newpipe.extractor.services.youtube.extractors;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.DISABLE_PRETTY_PRINT_PARAMETER;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.YOUTUBEI_V1_URL;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getJsonPostResponse;
-import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getKey;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getTextFromObject;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.getValidJsonResponseBody;
 import static org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper.prepareDesktopJsonBuilder;
@@ -33,26 +32,6 @@ import java.util.HashMap;
 import java.util.List;
 
 import javax.annotation.Nonnull;
-
-/*
- * Created by Christian Schabesberger on 22.07.2018
- *
- * Copyright (C) Christian Schabesberger 2018 <chris.schabesberger@mailbox.org>
- * YoutubeSearchExtractor.java is part of NewPipe.
- *
- * NewPipe is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * NewPipe is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with NewPipe.  If not, see <http://www.gnu.org/licenses/>.
- */
 
 public class YoutubeSearchExtractor extends YoutubeBaseSearchExtractor {
     private JsonObject initialData;
@@ -135,7 +114,7 @@ public class YoutubeSearchExtractor extends YoutubeBaseSearchExtractor {
 
     @Nonnull
     @Override
-    public InfoItemsPage<InfoItem> getInitialPage() throws IOException, ExtractionException {
+    public InfoItemsPage<InfoItem> getInitialPageInternal() throws IOException, ExtractionException {
         final MultiInfoItemsCollector collector = new MultiInfoItemsCollector(getServiceId());
 
         final JsonArray sections = initialData.getObject("contents")
@@ -155,14 +134,11 @@ public class YoutubeSearchExtractor extends YoutubeBaseSearchExtractor {
                         .getObject("continuationItemRenderer"));
             }
         }
-        if (ServiceList.YouTube.getFilterTypes().contains("search_result")) {
-            collector.applyBlocking(ServiceList.YouTube.getStreamKeywordFilter(), ServiceList.YouTube.getStreamChannelFilter(), ServiceList.YouTube.isFilterShorts());
-        }
         return new InfoItemsPage<>(collector, nextPage);
     }
 
     @Override
-    public InfoItemsPage<InfoItem> getPage(final Page page) throws IOException,
+    public InfoItemsPage<InfoItem> getPageInternal(final Page page) throws IOException,
             ExtractionException {
         if (page == null || isNullOrEmpty(page.getUrl())) {
             throw new IllegalArgumentException("Page doesn't contain an URL");
@@ -196,10 +172,6 @@ public class YoutubeSearchExtractor extends YoutubeBaseSearchExtractor {
         final JsonArray contents = continuationItems.getObject(0)
                 .getObject("itemSectionRenderer").getArray("contents");
         collectStreamsFrom(collector, contents);
-
-        if (ServiceList.YouTube.getFilterTypes().contains("search_result")) {
-            collector.applyBlocking(ServiceList.YouTube.getStreamKeywordFilter(), ServiceList.YouTube.getStreamChannelFilter(), ServiceList.YouTube.isFilterShorts());
-        }
         return new InfoItemsPage<>(collector, getNextPageFrom(continuationItems.getObject(1)
                 .getObject("continuationItemRenderer")));
     }
@@ -243,7 +215,7 @@ public class YoutubeSearchExtractor extends YoutubeBaseSearchExtractor {
         final String token = continuationItemRenderer.getObject("continuationEndpoint")
                 .getObject("continuationCommand").getString("token");
 
-        final String url = YOUTUBEI_V1_URL + "search?key=" + getKey()
+        final String url = YOUTUBEI_V1_URL + "search?"
                 + DISABLE_PRETTY_PRINT_PARAMETER;
 
         return new Page(url, token);

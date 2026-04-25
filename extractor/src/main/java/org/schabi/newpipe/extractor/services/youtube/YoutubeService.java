@@ -1,5 +1,6 @@
 package org.schabi.newpipe.extractor.services.youtube;
 
+import org.schabi.newpipe.extractor.NewPipe;
 import org.schabi.newpipe.extractor.bulletComments.BulletCommentsExtractor;
 import org.schabi.newpipe.extractor.search.filter.FilterItem;
 import org.schabi.newpipe.extractor.services.youtube.extractors.YoutubeBulletCommentsExtractor;
@@ -169,18 +170,9 @@ public class YoutubeService extends StreamingService {
                             id
                     ),
                     new YoutubeTrendingLinkHandlerFactory(),
-                    "Trending"
-            );
-            list.addKioskEntry(
-                    (streamingService, url, id) -> new YoutubeTrendingExtractor(
-                            YoutubeService.this,
-                            new YoutubeTrendingLinkHandlerFactory().fromUrl(url),
-                            id
-                    ),
-                    new YoutubeTrendingLinkHandlerFactory(),
                     "Recommended Lives"
             );
-            list.setDefaultKiosk("Trending");
+            list.setDefaultKiosk("Recommended Lives");
         } catch (final Exception e) {
             throw new ExtractionException(e);
         }
@@ -215,8 +207,9 @@ public class YoutubeService extends StreamingService {
     //////////////////////////////////////////////////////////////////////////*/
 
     // https://www.youtube.com/picker_ajax?action_language_json=1
+    // Using "zu" (Zulu) to prevent YouTube from auto-translating video titles
     private static final List<Localization> SUPPORTED_LANGUAGES = Localization.listFrom(
-            "en-GB"
+            "zu"
     );
 
     // https://www.youtube.com/picker_ajax?action_country_json=1
@@ -234,6 +227,11 @@ public class YoutubeService extends StreamingService {
     @Override
     public List<Localization> getSupportedLocalizations() {
         return SUPPORTED_LANGUAGES;
+    }
+
+    @Override
+    public Localization getLocalization() {
+        return new Localization("zu");
     }
 
     @Override
